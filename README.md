@@ -1,388 +1,123 @@
-<img src="./images/denoising-diffusion.png" width="500px"></img>
+## Corrosion Diffusion: Conditional Image Generation from RF Measurements
 
-## Denoising Diffusion Probabilistic Model, in Pytorch
+This repository trains and evaluates a conditional diffusion model that synthesizes corrosion images from RF measurement vectors. It adapts `denoising_diffusion_pytorch` to condition a UNet on continuous features such as `S11`, `S21`, `Phase11`, and `Phase21`.
 
-Implementation of <a href="https://arxiv.org/abs/2006.11239">Denoising Diffusion Probabilistic Model</a> in Pytorch. It is a new approach to generative modeling that may <a href="https://ajolicoeur.wordpress.com/the-new-contender-to-gans-score-matching-with-langevin-sampling/">have the potential</a> to rival GANs. It uses denoising score matching to estimate the gradient of the data distribution, followed by Langevin sampling to sample from the true distribution.
+- Single‑channel target images are used (red channel of RGB).
+- Conditioning is a concatenated float vector (length 201 per selected channel).
+- Training, inference, and evaluation scripts are included.
 
-This implementation was inspired by the official Tensorflow version <a href="https://github.com/hojonathanho/diffusion">here</a>
-
-Youtube AI Educators - <a href="https://www.youtube.com/watch?v=W-O7AZNzbzQ">Yannic Kilcher</a> | <a href="https://www.youtube.com/watch?v=344w5h24-h8">AI Coffeebreak with Letitia</a> | <a href="https://www.youtube.com/watch?v=HoKDTa5jHvg">Outlier</a>
-
-<a href="https://github.com/yiyixuxu/denoising-diffusion-flax">Flax implementation</a> from <a href="https://github.com/yiyixuxu">YiYi Xu</a>
-
-<a href="https://huggingface.co/blog/annotated-diffusion">Annotated code</a> by Research Scientists / Engineers from <a href="https://huggingface.co/">🤗 Huggingface</a>
-
-Update: Turns out none of the technicalities really matters at all | <a href="https://arxiv.org/abs/2208.09392">"Cold Diffusion" paper</a> | <a href="https://muse-model.github.io/">Muse</a>
-
-<img src="./images/sample.png" width="500px"><img>
-
-[![PyPI version](https://badge.fury.io/py/denoising-diffusion-pytorch.svg)](https://badge.fury.io/py/denoising-diffusion-pytorch)
-
-## Install
+### Installation
 
 ```bash
-$ pip install denoising_diffusion_pytorch
+# Python 3.9+ recommended
+python -m venv .venv && source .venv/bin/activate
+
+# Install PyTorch (choose the right command for your CUDA version)
+# See https://pytorch.org/get-started/locally/
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# Core dependencies
+pip install denoising-diffusion-pytorch einops tqdm pillow pandas tensorboard scikit-image
 ```
 
-## Usage
+### Dataset
 
-```python
-import torch
-from denoising_diffusion_pytorch import Unet, GaussianDiffusion
+See `DATASET.md` for details.
 
-model = Unet(
-    dim = 64,
-    dim_mults = (1, 2, 4, 8),
-    flash_attn = True
-)
+- CSV files: `datasets/Corrosion_train.csv` and `datasets/Corrosion_test.csv`
+- Columns: `filename`, `S11`, `S21`, `Phase11`, `Phase21`
+- Each measurement column is a single string with 201 space‑separated floats
+- Ground‑truth images live under `datasets/corrosion_img/<SAMPLE_INDEX>/<filename>.png`
+  - The `<SAMPLE_INDEX>` is the second token of `filename` split by `_`
 
-diffusion = GaussianDiffusion(
-    model,
-    image_size = 128,
-    timesteps = 1000    # number of steps
-)
+Example filename → image path mapping:
+- `0525_61_30.89263840450541_augmented` → `datasets/corrosion_img/61/0525_61_30.89263840450541_augmented.png`
 
-training_images = torch.rand(8, 3, 128, 128) # images are normalized from 0 to 1
-loss = diffusion(training_images)
-loss.backward()
+### Quick Start
 
-# after a lot of training
+- Training: `train.py`
+- Inference (image generation): `inference.py`
+- Evaluation (MAE/MSE/PSNR/SSIM on red channel): `compare.py`
 
-sampled_images = diffusion.sample(batch_size = 4)
-sampled_images.shape # (4, 3, 128, 128)
+You can also see `run.sh` for example commands.
+
+### Training
+
+```bash
+python train.py \
+  --csv        ./datasets/Corrosion_train.csv \
+  --val_csv    ./datasets/Corrosion_test.csv \
+  --img_root   ./datasets/corrosion_img \
+  --use_channels S11 S21 Phase11 \
+  --image_size 64 \
+  --timesteps 1000 \
+  --sampling_timesteps 250 \
+  --batch_size 16 \
+  --lr 8e-5 \
+  --num_steps 1000000 \
+  --log_every 10000 \
+  --save_every 100000 \
+  --log_dir ./logs_ext
 ```
 
-Or, if you simply want to pass in a folder name and the desired image dimensions, you can use the `Trainer` class to easily train a model.
+Key notes:
+- Images are read as RGB but only the red channel is used and normalized to `[-1, 1]`.
+- Conditioning dimension is `201 * len(--use_channels)` (e.g., `402` for `S11 S21`).
+- Optional: `--use_mlp <hidden_dim>` enables a projection MLP applied to the conditioning vector.
+- Checkpoints and TensorBoard logs are written under a timestamped subdirectory in `--log_dir` (default `./logs_ext/<YYYYMMDD-HHMMSS>`).
 
-```python
-from denoising_diffusion_pytorch import Unet, GaussianDiffusion, Trainer
+### Inference (Generate Images)
 
-model = Unet(
-    dim = 64,
-    dim_mults = (1, 2, 4, 8),
-    flash_attn = True
-)
-
-diffusion = GaussianDiffusion(
-    model,
-    image_size = 128,
-    timesteps = 1000,           # number of steps
-    sampling_timesteps = 250    # number of sampling timesteps (using ddim for faster inference [see citation for ddim paper])
-)
-
-trainer = Trainer(
-    diffusion,
-    'path/to/your/images',
-    train_batch_size = 32,
-    train_lr = 8e-5,
-    train_num_steps = 700000,         # total training steps
-    gradient_accumulate_every = 2,    # gradient accumulation steps
-    ema_decay = 0.995,                # exponential moving average decay
-    amp = True,                       # turn on mixed precision
-    calculate_fid = True              # whether to calculate fid during training
-)
-
-trainer.train()
+```bash
+python inference.py \
+  --checkpoint ./logs_ext/20250816-213838/model_step_400000.pt \
+  --csv ./datasets/Corrosion_test.csv \
+  --output ./output/S11_S21_400k \
+  --img_root ./datasets/corrosion_img \
+  --use_channels S11 S21 \
+  --image_size 64 \
+  --timesteps 1000 \
+  --sampling_timesteps 250 \
+  --batch_size 16
 ```
 
-Samples and model checkpoints will be logged to `./results` periodically
+Behavior:
+- Generates single‑channel images; saved as red‑only RGB PNGs.
+- If the original target image exists, the generated image is resized back to the original resolution before saving.
+- If you trained with `--use_mlp`, pass the same flag and value during inference.
 
-## Multi-GPU Training
+### Evaluation
 
-The `Trainer` class is now equipped with <a href="https://huggingface.co/docs/accelerate/accelerator">🤗 Accelerator</a>. You can easily do multi-gpu training in two steps using their `accelerate` CLI
+Compare generated images against ground truth (on the red channel):
 
-At the project root directory, where the training script is, run
-
-```python
-$ accelerate config
+```bash
+python compare.py \
+  --csv ./datasets/Corrosion_test.csv \
+  --img_root ./datasets/corrosion_img \
+  --gen_root ./output/S11_S21_400k \
+  --out_csv ./output/S11_S21_400k_metrics.csv
 ```
 
-Then, in the same directory
+- Outputs per‑image metrics CSV and prints averages for MAE, MSE, PSNR, SSIM.
+- `scikit-image` is optional; if not installed, SSIM will be reported as NaN.
 
-```python
-$ accelerate launch train.py
-```
+### Logging
 
-## Miscellaneous
+- TensorBoard: `tensorboard --logdir ./logs_ext`
+- Checkpoints: `./logs_ext/<run_id>/model_step_*.pt`
 
-### 1D Sequence
+### Tips
 
-By popular request, a 1D Unet + Gaussian Diffusion implementation.
+- Ensure the `filename` convention and directory structure match `DATASET.md`.
+- For multi‑GPU, consider using `torchrun` or `accelerate` to launch `train.py`.
+- Adjust `--image_size` to balance speed and fidelity.
 
-```python
-import torch
-from denoising_diffusion_pytorch import Unet1D, GaussianDiffusion1D, Trainer1D, Dataset1D
+### Acknowledgements
 
-model = Unet1D(
-    dim = 64,
-    dim_mults = (1, 2, 4, 8),
-    channels = 32
-)
+- Built on top of `denoising_diffusion_pytorch` by Phil Wang.
 
-diffusion = GaussianDiffusion1D(
-    model,
-    seq_length = 128,
-    timesteps = 1000,
-    objective = 'pred_v'
-)
+### License
 
-training_seq = torch.rand(64, 32, 128) # features are normalized from 0 to 1
+Retains the license obligations of upstream components. Ensure you keep attribution and comply with dataset licenses.
 
-loss = diffusion(training_seq)
-loss.backward()
 
-# Or using trainer
-
-dataset = Dataset1D(training_seq)  # this is just an example, but you can formulate your own Dataset and pass it into the `Trainer1D` below
-
-trainer = Trainer1D(
-    diffusion,
-    dataset = dataset,
-    train_batch_size = 32,
-    train_lr = 8e-5,
-    train_num_steps = 700000,         # total training steps
-    gradient_accumulate_every = 2,    # gradient accumulation steps
-    ema_decay = 0.995,                # exponential moving average decay
-    amp = True,                       # turn on mixed precision
-)
-trainer.train()
-
-# after a lot of training
-
-sampled_seq = diffusion.sample(batch_size = 4)
-sampled_seq.shape # (4, 32, 128)
-
-```
-
-`Trainer1D` does not evaluate the generated samples in any way since the type of data is not known.
-
-You could consider adding a suitable metric to the training loop yourself after doing an editable install of this package
-`pip install -e .`.
-
-## Citations
-
-```bibtex
-@inproceedings{NEURIPS2020_4c5bcfec,
-    author      = {Ho, Jonathan and Jain, Ajay and Abbeel, Pieter},
-    booktitle   = {Advances in Neural Information Processing Systems},
-    editor      = {H. Larochelle and M. Ranzato and R. Hadsell and M.F. Balcan and H. Lin},
-    pages       = {6840--6851},
-    publisher   = {Curran Associates, Inc.},
-    title       = {Denoising Diffusion Probabilistic Models},
-    url         = {https://proceedings.neurips.cc/paper/2020/file/4c5bcfec8584af0d967f1ab10179ca4b-Paper.pdf},
-    volume      = {33},
-    year        = {2020}
-}
-```
-
-```bibtex
-@InProceedings{pmlr-v139-nichol21a,
-    title       = {Improved Denoising Diffusion Probabilistic Models},
-    author      = {Nichol, Alexander Quinn and Dhariwal, Prafulla},
-    booktitle   = {Proceedings of the 38th International Conference on Machine Learning},
-    pages       = {8162--8171},
-    year        = {2021},
-    editor      = {Meila, Marina and Zhang, Tong},
-    volume      = {139},
-    series      = {Proceedings of Machine Learning Research},
-    month       = {18--24 Jul},
-    publisher   = {PMLR},
-    pdf         = {http://proceedings.mlr.press/v139/nichol21a/nichol21a.pdf},
-    url         = {https://proceedings.mlr.press/v139/nichol21a.html},
-}
-```
-
-```bibtex
-@inproceedings{kingma2021on,
-    title       = {On Density Estimation with Diffusion Models},
-    author      = {Diederik P Kingma and Tim Salimans and Ben Poole and Jonathan Ho},
-    booktitle   = {Advances in Neural Information Processing Systems},
-    editor      = {A. Beygelzimer and Y. Dauphin and P. Liang and J. Wortman Vaughan},
-    year        = {2021},
-    url         = {https://openreview.net/forum?id=2LdBqxc1Yv}
-}
-```
-
-```bibtex
-@article{Karras2022ElucidatingTD,
-    title   = {Elucidating the Design Space of Diffusion-Based Generative Models},
-    author  = {Tero Karras and Miika Aittala and Timo Aila and Samuli Laine},
-    journal = {ArXiv},
-    year    = {2022},
-    volume  = {abs/2206.00364}
-}
-```
-
-```bibtex
-@article{Song2021DenoisingDI,
-    title   = {Denoising Diffusion Implicit Models},
-    author  = {Jiaming Song and Chenlin Meng and Stefano Ermon},
-    journal = {ArXiv},
-    year    = {2021},
-    volume  = {abs/2010.02502}
-}
-```
-
-```bibtex
-@misc{chen2022analog,
-    title   = {Analog Bits: Generating Discrete Data using Diffusion Models with Self-Conditioning},
-    author  = {Ting Chen and Ruixiang Zhang and Geoffrey Hinton},
-    year    = {2022},
-    eprint  = {2208.04202},
-    archivePrefix = {arXiv},
-    primaryClass = {cs.CV}
-}
-```
-
-```bibtex
-@article{Salimans2022ProgressiveDF,
-    title   = {Progressive Distillation for Fast Sampling of Diffusion Models},
-    author  = {Tim Salimans and Jonathan Ho},
-    journal = {ArXiv},
-    year    = {2022},
-    volume  = {abs/2202.00512}
-}
-```
-
-```bibtex
-@article{Ho2022ClassifierFreeDG,
-    title   = {Classifier-Free Diffusion Guidance},
-    author  = {Jonathan Ho},
-    journal = {ArXiv},
-    year    = {2022},
-    volume  = {abs/2207.12598}
-}
-```
-
-```bibtex
-@article{Sunkara2022NoMS,
-    title   = {No More Strided Convolutions or Pooling: A New CNN Building Block for Low-Resolution Images and Small Objects},
-    author  = {Raja Sunkara and Tie Luo},
-    journal = {ArXiv},
-    year    = {2022},
-    volume  = {abs/2208.03641}
-}
-```
-
-```bibtex
-@inproceedings{Jabri2022ScalableAC,
-    title   = {Scalable Adaptive Computation for Iterative Generation},
-    author  = {A. Jabri and David J. Fleet and Ting Chen},
-    year    = {2022}
-}
-```
-
-```bibtex
-@article{Cheng2022DPMSolverPlusPlus,
-    title   = {DPM-Solver++: Fast Solver for Guided Sampling of Diffusion Probabilistic Models},
-    author  = {Cheng Lu and Yuhao Zhou and Fan Bao and Jianfei Chen and Chongxuan Li and Jun Zhu},
-    journal = {NeuRips 2022 Oral},
-    year    = {2022},
-    volume  = {abs/2211.01095}
-}
-```
-
-```bibtex
-@inproceedings{Hoogeboom2023simpleDE,
-    title   = {simple diffusion: End-to-end diffusion for high resolution images},
-    author  = {Emiel Hoogeboom and Jonathan Heek and Tim Salimans},
-    year    = {2023}
-}
-```
-
-```bibtex
-@misc{https://doi.org/10.48550/arxiv.2302.01327,
-    doi     = {10.48550/ARXIV.2302.01327},
-    url     = {https://arxiv.org/abs/2302.01327},
-    author  = {Kumar, Manoj and Dehghani, Mostafa and Houlsby, Neil},
-    title   = {Dual PatchNorm},
-    publisher = {arXiv},
-    year    = {2023},
-    copyright = {Creative Commons Attribution 4.0 International}
-}
-```
-
-```bibtex
-@inproceedings{Hang2023EfficientDT,
-    title   = {Efficient Diffusion Training via Min-SNR Weighting Strategy},
-    author  = {Tiankai Hang and Shuyang Gu and Chen Li and Jianmin Bao and Dong Chen and Han Hu and Xin Geng and Baining Guo},
-    year    = {2023}
-}
-```
-
-```bibtex
-@misc{Guttenberg2023,
-    author  = {Nicholas Guttenberg},
-    url     = {https://www.crosslabs.org/blog/diffusion-with-offset-noise}
-}
-```
-
-```bibtex
-@inproceedings{Lin2023CommonDN,
-    title   = {Common Diffusion Noise Schedules and Sample Steps are Flawed},
-    author  = {Shanchuan Lin and Bingchen Liu and Jiashi Li and Xiao Yang},
-    year    = {2023}
-}
-```
-
-```bibtex
-@inproceedings{dao2022flashattention,
-    title   = {Flash{A}ttention: Fast and Memory-Efficient Exact Attention with {IO}-Awareness},
-    author  = {Dao, Tri and Fu, Daniel Y. and Ermon, Stefano and Rudra, Atri and R{\'e}, Christopher},
-    booktitle = {Advances in Neural Information Processing Systems},
-    year    = {2022}
-}
-```
-
-```bibtex
-@article{Bondarenko2023QuantizableTR,
-    title   = {Quantizable Transformers: Removing Outliers by Helping Attention Heads Do Nothing},
-    author  = {Yelysei Bondarenko and Markus Nagel and Tijmen Blankevoort},
-    journal = {ArXiv},
-    year    = {2023},
-    volume  = {abs/2306.12929},
-    url     = {https://api.semanticscholar.org/CorpusID:259224568}
-}
-```
-
-```bibtex
-@article{Karras2023AnalyzingAI,
-    title   = {Analyzing and Improving the Training Dynamics of Diffusion Models},
-    author  = {Tero Karras and Miika Aittala and Jaakko Lehtinen and Janne Hellsten and Timo Aila and Samuli Laine},
-    journal = {ArXiv},
-    year    = {2023},
-    volume  = {abs/2312.02696},
-    url     = {https://api.semanticscholar.org/CorpusID:265659032}
-}
-```
-
-```bibtex
-@article{Li2024ImmiscibleDA,
-    title   = {Immiscible Diffusion: Accelerating Diffusion Training with Noise Assignment},
-    author  = {Yiheng Li and Heyang Jiang and Akio Kodaira and Masayoshi Tomizuka and Kurt Keutzer and Chenfeng Xu},
-    journal = {ArXiv},
-    year    = {2024},
-    volume  = {abs/2406.12303},
-    url     = {https://api.semanticscholar.org/CorpusID:270562607}
-}
-```
-
-```bibtex
-@article{Chung2024CFGMC,
-    title   = {CFG++: Manifold-constrained Classifier Free Guidance for Diffusion Models},
-    author  = {Hyungjin Chung and Jeongsol Kim and Geon Yeong Park and Hyelin Nam and Jong Chul Ye},
-    journal = {ArXiv},
-    year    = {2024},
-    volume  = {abs/2406.08070},
-    url     = {https://api.semanticscholar.org/CorpusID:270391454}
-}
-```
-
-```bibtex
-@inproceedings{Sadat2024EliminatingOA,
-    title   = {Eliminating Oversaturation and Artifacts of High Guidance Scales in Diffusion Models},
-    author  = {Seyedmorteza Sadat and Otmar Hilliges and Romann M. Weber},
-    year    = {2024},
-    url     = {https://api.semanticscholar.org/CorpusID:273098845}
-}
-```
