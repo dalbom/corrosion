@@ -1,3 +1,35 @@
+"""
+Evaluate Generated Images Quality (evaluate_metrics.py)
+========================================================
+
+This script compares generated images against their corresponding real (ground truth)
+images and computes quality metrics for evaluation.
+
+Metrics computed:
+    - MAE (Mean Absolute Error): Average pixel-wise absolute difference
+    - MSE (Mean Squared Error): Average pixel-wise squared difference  
+    - PSNR (Peak Signal-to-Noise Ratio): Logarithmic quality measure in dB
+    - SSIM (Structural Similarity Index): Perceptual quality metric
+
+Usage:
+    python evaluate_metrics.py \\
+        --csv datasets/Corrosion_test.csv \\
+        --img_root ./datasets/corrosion_img \\
+        --gen_root ./generated/S11 \\
+        --out_csv metrics_S11.csv
+
+Output:
+    - Per-image metrics saved to CSV
+    - Aggregate statistics printed to console
+
+Note:
+    - Only the RED channel is used for comparison (corrosion intensity)
+    - Images are resized to match if dimensions differ
+    - Requires scikit-image for SSIM computation
+
+Author: Corrosion Diffusion Project
+"""
+
 import argparse
 from pathlib import Path
 import math
@@ -123,6 +155,8 @@ def main(args: argparse.Namespace) -> None:
 
 if __name__ == "__main__":
     main(parse_args())
+
+
 
 
 

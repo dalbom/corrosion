@@ -1,3 +1,35 @@
+"""
+Generate Corrosion Images from Sensor Data (inference.py)
+==========================================================
+
+This script generates corrosion images using a trained conditional diffusion model.
+Given sensor measurement vectors (S-parameters), it produces corresponding 
+corrosion pattern images.
+
+The generated images represent predicted corrosion patterns based on the
+electromagnetic sensor readings, with intensity encoded in the RED channel.
+
+Usage:
+    python inference.py \\
+        --checkpoint logs_ext/model_step_1000000.pt \\
+        --csv datasets/Corrosion_test.csv \\
+        --output generated/S11_S21 \\
+        --use_channels S11 S21 \\
+        --image_size 128
+
+Key Features:
+    - Supports both DDPM and DDIM sampling strategies
+    - Handles multiple sensor channels (S11, S21, Phase11, Phase21)
+    - Automatically resizes output to match original image dimensions
+    - Optional MLP projection for conditioning vectors
+
+Output:
+    - Generated images saved to output directory, organized by sample index
+    - Images saved as PNG with corrosion intensity in RED channel
+
+Author: Corrosion Diffusion Project
+"""
+
 import argparse
 from pathlib import Path
 from typing import List, Tuple
@@ -174,22 +206,12 @@ def main(args: argparse.Namespace) -> None:
     cond_dim = ds.cond_dim
 
     # load checkpoint first so we can infer architecture (channels, dim) if needed
-    ckpt = torch.load(args.checkpoint, map_location=device)
+    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=True)
     state_dict = ckpt.get("model", ckpt)
 
-    # infer base dims and channels from input block weights if present
-    inferred_dim = None
-    inferred_channels = None
-    w = state_dict.get("input_block.weight")
-    if isinstance(w, torch.Tensor) and w.ndim == 4:
-        inferred_dim = w.shape[0]
-        # input_block uses concat_ones_to_input=True, so in_ch = channels + 1
-        in_ch_plus_one = w.shape[1]
-        inferred_channels = max(in_ch_plus_one - 1, 1)
-
     model = KarrasUnet(
-        dim=inferred_dim or 64,
-        channels=inferred_channels or 1,
+        dim=64,
+        channels=1,
         image_size=args.image_size,
         num_classes=cond_dim,
     ).to(device)
@@ -203,7 +225,7 @@ def main(args: argparse.Namespace) -> None:
     ).to(device)
 
     # load weights non-strict to tolerate minor differences in attention placement, etc.
-    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    missing, unexpected = model.load_state_dict(state_dict, strict=True)
     if missing or unexpected:
         print(f"[inference] loaded with {len(missing)} missing and {len(unexpected)} unexpected keys")
     
@@ -237,9 +259,6 @@ def main(args: argparse.Namespace) -> None:
             cond = projection(cond)
             bsz = cond.size(0)
             imgs = conditioned_sample(diffusion, batch_size=bsz, class_labels=cond)
-            # imgs in [0,1], shape [B,C,H,W]; keep red when C==3
-            if imgs.size(1) == 3:
-                imgs = imgs[:, 0:1, :, :]
             imgs_rgb = to_red_rgb(imgs)
 
             for img, fname, sidx in zip(imgs_rgb, filenames, sample_indices):

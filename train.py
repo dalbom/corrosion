@@ -428,7 +428,7 @@ def train(args: argparse.Namespace) -> None:
                 diffusion.train()
 
                 # Scale generated images to [0, 1] for visualization and convert to red-only RGB
-                sampled_images = (sampled_images + 1) * 0.5  # [B,1,H,W]
+                #sampled_images = (sampled_images + 1) * 0.5  # [B,1,H,W]
                 sampled_images_rgb = to_red_rgb(sampled_images)
                 grid = make_grid(sampled_images_rgb, nrow=4)
                 writer.add_image("validation/sampled_images", grid, step)
