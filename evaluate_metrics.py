@@ -10,6 +10,7 @@ Metrics computed:
     - MSE (Mean Squared Error): Average pixel-wise squared difference  
     - PSNR (Peak Signal-to-Noise Ratio): Logarithmic quality measure in dB
     - SSIM (Structural Similarity Index): Perceptual quality metric
+    - MACE (Mean Absolute Corrosion Error): Difference in corrosion percentage
 
 Usage:
     python evaluate_metrics.py \\
@@ -64,8 +65,8 @@ def resize_to(img: np.ndarray, target_shape: Tuple[int, int]) -> np.ndarray:
     return out
 
 
-def compute_metrics(x: np.ndarray, y: np.ndarray) -> Tuple[float, float, float, float]:
-    """Return (mae, mse, psnr, ssim_val) for two float images in [0,1]."""
+def compute_metrics(x: np.ndarray, y: np.ndarray) -> Tuple[float, float, float, float, float]:
+    """Return (mae, mse, psnr, ssim_val, mace) for two float images in [0,1]."""
     diff = x - y
     mae = float(np.mean(np.abs(diff)))
     mse = float(np.mean(diff ** 2))
@@ -74,7 +75,14 @@ def compute_metrics(x: np.ndarray, y: np.ndarray) -> Tuple[float, float, float, 
         ssim_val = float(ssim(x, y, data_range=1.0))
     else:
         ssim_val = float("nan")
-    return mae, mse, psnr, ssim_val
+    
+    # MACE: Mean Absolute Corrosion Error
+    # Corrosion score is mean pixel value * 100 (0-100 scale)
+    real_corrosion = float(x.mean()) * 100.0
+    gen_corrosion = float(y.mean()) * 100.0
+    mace = abs(real_corrosion - gen_corrosion)
+    
+    return mae, mse, psnr, ssim_val, mace
 
 
 def parse_args() -> argparse.Namespace:
@@ -120,7 +128,7 @@ def main(args: argparse.Namespace) -> None:
         if gen.shape != orig.shape:
             gen = resize_to(gen, orig.shape)
 
-        mae, mse, psnr, ssim_val = compute_metrics(orig, gen)
+        mae, mse, psnr, ssim_val, mace = compute_metrics(orig, gen)
 
         rows.append(
             dict(
@@ -130,6 +138,7 @@ def main(args: argparse.Namespace) -> None:
                 mse=mse,
                 psnr=psnr,
                 ssim=ssim_val,
+                mace=mace,
             )
         )
 
@@ -144,9 +153,10 @@ def main(args: argparse.Namespace) -> None:
 
     print(f"Saved per-image metrics to {out_path}")
     print(
-        "Averages -> MAE: {:.6f}, MSE: {:.6f}, PSNR: {:.2f} dB, SSIM: {}".format(
+        "Averages -> MAE: {:.6f}, MSE: {:.6f}, PSNR: {:.2f} dB, SSIM: {}, MACE: {:.4f}".format(
             out_df.mae.mean(), out_df.mse.mean(), out_df.psnr[out_df.psnr != float("inf")].mean(),
-            ("{:.4f}".format(out_df.ssim.mean()) if _HAS_SKIMAGE else "skimage not installed")
+            ("{:.4f}".format(out_df.ssim.mean()) if _HAS_SKIMAGE else "skimage not installed"),
+            out_df.mace.mean()
         )
     )
     if num_missing:

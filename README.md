@@ -112,6 +112,34 @@ python compare.py \
 - For multi‑GPU, consider using `torchrun` or `accelerate` to launch `train.py`.
 - Adjust `--image_size` to balance speed and fidelity.
 
+### Post Image Processing
+
+Generated images often exhibit systematic intensity offsets compared to real images. We provide several correction methods to align the distribution of generated images with real images.
+
+**Available Methods:**
+
+| Method | Description | Best For |
+|--------|-------------|----------|
+| **Histogram Matching** | Matches the full histogram distribution of generated images to real images | General use, good baseline |
+| **Offset Correction** | Adds/subtracts a constant value to shift mean intensity | Simple linear shift |
+| **Scaling Correction** | Multiplies by a factor to match mean intensity | Proportional adjustment |
+| **Linear Regression** | Applies a learned linear transformation (y = mx + b) | When relationship is linear |
+| **Soft Histogram Matching** | Blends histogram matching with original (α=0.5) | Preserving some original characteristics |
+| **Nonlinear Curve Fitting** | Gamma correction + polynomial LUT | Complex nonlinear relationships |
+| **Optimal Transport (EMD)** | Minimizes Earth Mover's Distance between distributions | Theoretically optimal mapping |
+
+**Quick Usage:**
+
+```bash
+# Apply correction to generated images
+python correct_generated_images.py
+
+# Visualize before/after distributions
+python create_histogram_figure.py
+```
+
+For detailed explanations of each method, see **[IMGPROC.md](IMGPROC.md)**.
+
 ### Acknowledgements
 
 - Built on top of `denoising_diffusion_pytorch` by Phil Wang.
