@@ -283,11 +283,12 @@ def main():
         return
 
     # --- 2. Setup Paths and Data ---
-    train_csv_path = "datasets/Corrosion_train.csv"
+    #train_csv_path = "datasets/Corrosion_train.csv"
+    train_csv_path = "datasets/Corrosion_cGAN_train.csv"
     test_dir = "datasets/test"
     base_image_dir = "datasets/corrosion_img"
-    generated_images_base_dir = "generated"
-    corrected_images_base_dir = "corrected"
+    generated_images_base_dir = "generated_cGAN"
+    corrected_images_base_dir = "corrected_cGAN"
 
     # --- Load Training Data for Correction Reference ---
     print("Loading training data for correction reference...")

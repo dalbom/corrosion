@@ -92,6 +92,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gen_root", type=str, required=True, help="Root dir of generated images")
     p.add_argument("--out_csv", type=str, default="metrics.csv", help="Where to save per-image metrics")
     p.add_argument("--max_items", type=int, default=0, help="Optional cap on number of rows to evaluate (0 = all)")
+    p.add_argument("--table", action="store_true", help="Print result as a single tab-separated line")
+    p.add_argument("--sensor", type=str, default="", help="Sensor name for table output")
     return p.parse_args()
 
 
@@ -151,16 +153,27 @@ def main(args: argparse.Namespace) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_df.to_csv(out_path, index=False)
 
-    print(f"Saved per-image metrics to {out_path}")
-    print(
-        "Averages -> MAE: {:.6f}, MSE: {:.6f}, PSNR: {:.2f} dB, SSIM: {}, MACE: {:.4f}".format(
-            out_df.mae.mean(), out_df.mse.mean(), out_df.psnr[out_df.psnr != float("inf")].mean(),
-            ("{:.4f}".format(out_df.ssim.mean()) if _HAS_SKIMAGE else "skimage not installed"),
-            out_df.mace.mean()
+    avg_mae = out_df.mae.mean()
+    avg_mse = out_df.mse.mean()
+    avg_psnr = out_df.psnr[out_df.psnr != float("inf")].mean()
+    avg_ssim = out_df.ssim.mean() if _HAS_SKIMAGE else float("nan")
+    avg_mace = out_df.mace.mean()
+
+    if args.table:
+        # Format: Sensor MAE MSE PSNR SSIM MACE
+        ssim_str = f"{avg_ssim:.4f}" if _HAS_SKIMAGE else "N/A"
+        print(f"{args.sensor}\t{avg_mae:.6f}\t{avg_mse:.6f}\t{avg_psnr:.2f}\t{ssim_str}\t{avg_mace:.4f}")
+    else:
+        print(f"Saved per-image metrics to {out_path}")
+        print(
+            "Averages -> MAE: {:.6f}, MSE: {:.6f}, PSNR: {:.2f} dB, SSIM: {}, MACE: {:.4f}".format(
+                avg_mae, avg_mse, avg_psnr,
+                ("{:.4f}".format(avg_ssim) if _HAS_SKIMAGE else "skimage not installed"),
+                avg_mace
+            )
         )
-    )
-    if num_missing:
-        print(f"Warning: {num_missing} pairs skipped due to missing files.")
+        if num_missing:
+            print(f"Warning: {num_missing} pairs skipped due to missing files.")
 
 
 if __name__ == "__main__":
