@@ -243,33 +243,40 @@ class CorrosionDataset(Dataset):
             ]
         )
 
+        # Pre-parse all conditioning vectors and image paths at init time to
+        # avoid costly string→float conversion on every __getitem__ call.
+        self._cond_cache: List[torch.Tensor] = []
+        self._img_paths: List[Path] = []
+        for i in range(len(self.df)):
+            row = self.df.iloc[i]
+            # Parse measurement values once
+            cond_vectors = []
+            for ch in self.use_channels:
+                values = [float(x) for x in str(row[ch]).split()]
+                if len(values) != 201:
+                    raise ValueError(
+                        f"Column {ch} does not contain 201 values; got {len(values)}"
+                    )
+                cond_vectors.append(torch.tensor(values, dtype=torch.float))
+            self._cond_cache.append(torch.cat(cond_vectors, dim=0))
+            # Resolve image path once
+            filename = row["filename"]
+            try:
+                sample_index = filename.split("_")[1]
+            except IndexError:
+                raise ValueError(f"Unexpected filename format: {filename}")
+            img_path = self.img_root / sample_index / f"{filename}.png"
+            if not img_path.exists():
+                raise FileNotFoundError(f"Target image not found: {img_path}")
+            self._img_paths.append(img_path)
+
     def __len__(self) -> int:
         return len(self.df)
 
     def __getitem__(self, idx: int):
-        row = self.df.iloc[idx]
-        # Parse measurement values
-        cond_vectors = []
-        for ch in self.use_channels:
-            values = [float(x) for x in str(row[ch]).split()]
-            if len(values) != 201:
-                raise ValueError(
-                    f"Column {ch} does not contain 201 values; got {len(values)}"
-                )
-            cond_vectors.append(torch.tensor(values, dtype=torch.float))
-        cond = torch.cat(cond_vectors, dim=0)
+        cond = self._cond_cache[idx]
         # Load image
-        filename = row["filename"]
-        # According to the naming convention, the second component after
-        # splitting on '_' is the sample index
-        try:
-            sample_index = filename.split("_")[1]
-        except IndexError:
-            raise ValueError(f"Unexpected filename format: {filename}")
-        img_path = self.img_root / sample_index / f"{filename}.png"
-        if not img_path.exists():
-            raise FileNotFoundError(f"Target image not found: {img_path}")
-        img = Image.open(img_path)
+        img = Image.open(self._img_paths[idx])
         # Ensure RGB, then keep only the red channel as a single-channel tensor
         if img.mode != "RGB":
             img = img.convert("RGB")
@@ -302,6 +309,8 @@ def train(args: argparse.Namespace) -> None:
         shuffle=True,
         num_workers=args.num_workers,
         drop_last=True,
+        pin_memory=True,
+        persistent_workers=args.num_workers > 0,
     )
 
     # Prepare validation dataset and a fixed batch for validation imaging
@@ -529,7 +538,7 @@ def parse_args() -> argparse.Namespace:
         "--num_steps", type=int, default=700_000, help="Total number of training steps"
     )
     parser.add_argument(
-        "--num_workers", type=int, default=4, help="Number of dataloader workers"
+        "--num_workers", type=int, default=8, help="Number of dataloader workers"
     )
     parser.add_argument(
         "--log_every", type=int, default=100, help="Logging interval in steps"
