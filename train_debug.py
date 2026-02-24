@@ -289,6 +289,14 @@ class CorrosionDataset(Dataset):
 def train(args: argparse.Namespace) -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # Enable cuDNN benchmark for optimal convolution algorithm selection
+    torch.backends.cudnn.benchmark = True
+
+    # AMP (Automatic Mixed Precision) for Tensor Core utilization
+    use_amp = device.type == "cuda"
+    scaler = torch.amp.GradScaler(enabled=use_amp)
+    print(f"Device: {device} | AMP: {use_amp} | cuDNN benchmark: True")
+
     # Create a per-run directory under the base logs directory, formatted as YYYYMMDD-HHMMSS
     run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = Path(args.log_dir) / run_id
@@ -422,21 +430,24 @@ def train(args: argparse.Namespace) -> None:
             t = torch.randint(0, diffusion.num_timesteps, (b,), device=device).long()
             noise = torch.randn_like(x_start)
             x_noisy = diffusion.q_sample(x_start=x_start, t=t, noise=noise)
-            cond_in = projection(cond)
-            pred_noise = model(x_noisy, t, class_labels=cond_in)
-            loss = F.mse_loss(pred_noise, noise, reduction="none")
-            loss = reduce(loss, "b c h w -> b", "mean")
+            with torch.amp.autocast(device_type="cuda", enabled=use_amp):
+                cond_in = projection(cond)
+                pred_noise = model(x_noisy, t, class_labels=cond_in)
+                loss = F.mse_loss(pred_noise, noise, reduction="none")
+                loss = reduce(loss, "b c h w -> b", "mean")
+            # Loss weighting in FP32 for numerical stability
             weights = extract(loss_weight, t, loss.shape)
             loss = (loss * weights).mean()
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
             t_forward += time.perf_counter() - t0
 
-            # --- Backward pass + optimizer step ---
+            # --- Backward pass + optimizer step (AMP-aware) ---
             t0 = time.perf_counter()
             optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
             t_backward += time.perf_counter() - t0
