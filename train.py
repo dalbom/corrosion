@@ -63,7 +63,6 @@ implemented separately if needed.
 """
 
 import argparse
-import time
 from pathlib import Path
 from typing import List
 
@@ -406,33 +405,12 @@ def train(args: argparse.Namespace) -> None:
 
     step = 0
     while step < args.num_steps:
-        # Per-epoch timing accumulators
-        t_data_load = 0.0
-        t_to_device = 0.0
-        t_forward = 0.0
-        t_backward = 0.0
-        epoch_steps = 0
-        epoch_start = time.perf_counter()
-
-        data_iter_start = time.perf_counter()
         for images, cond in tqdm(dataloader):
-            # --- Data loading time (includes worker fetch + collation) ---
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
-            t_data_load += time.perf_counter() - data_iter_start
-
-            # --- To-device transfer ---
-            t0 = time.perf_counter()
             images = images.to(device, non_blocking=True)
             cond = cond.to(device, non_blocking=True)
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
-            t_to_device += time.perf_counter() - t0
-
             b = images.size(0)
 
-            # --- Forward pass (normalize, diffuse, predict) ---
-            t0 = time.perf_counter()
+            # Forward pass
             x_start = diffusion.normalize(images)
             t = torch.randint(0, diffusion.num_timesteps, (b,), device=device).long()
             noise = torch.randn_like(x_start)
@@ -443,24 +421,16 @@ def train(args: argparse.Namespace) -> None:
             loss = reduce(loss, "b c h w -> b", "mean")
             weights = extract(loss_weight, t, loss.shape)
             loss = (loss * weights).mean()
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
-            t_forward += time.perf_counter() - t0
 
-            # --- Backward pass + optimizer step ---
-            t0 = time.perf_counter()
+            # Backward pass + optimizer step
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
-            t_backward += time.perf_counter() - t0
 
             # Log loss to Tensorboard
             writer.add_scalar("loss", loss.item(), step)
 
             step += 1
-            epoch_steps += 1
             if step % args.log_every == 0:
                 print(f"step {step} / {args.num_steps}, loss: {loss.item():.6f}")
 
@@ -529,22 +499,6 @@ def train(args: argparse.Namespace) -> None:
                 )
             if step >= args.num_steps:
                 break
-
-            # Reset timer for next iteration's data loading measurement
-            data_iter_start = time.perf_counter()
-
-        # --- Epoch timing summary ---
-        epoch_elapsed = time.perf_counter() - epoch_start
-        print(f"\n{'='*60}")
-        print(f"  Epoch timing breakdown ({epoch_steps} steps):")
-        print(f"    data_load : {t_data_load:8.2f}s  ({100*t_data_load/epoch_elapsed:5.1f}%)")
-        print(f"    to_device : {t_to_device:8.2f}s  ({100*t_to_device/epoch_elapsed:5.1f}%)")
-        print(f"    forward   : {t_forward:8.2f}s  ({100*t_forward/epoch_elapsed:5.1f}%)")
-        print(f"    backward  : {t_backward:8.2f}s  ({100*t_backward/epoch_elapsed:5.1f}%)")
-        other = epoch_elapsed - t_data_load - t_to_device - t_forward - t_backward
-        print(f"    other     : {other:8.2f}s  ({100*other/epoch_elapsed:5.1f}%)")
-        print(f"    TOTAL     : {epoch_elapsed:8.2f}s")
-        print(f"{'='*60}\n")
 
 
 def parse_args() -> argparse.Namespace:
