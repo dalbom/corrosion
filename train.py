@@ -63,6 +63,7 @@ implemented separately if needed.
 """
 
 import argparse
+import time
 from pathlib import Path
 from typing import List
 
@@ -288,6 +289,15 @@ class CorrosionDataset(Dataset):
 def train(args: argparse.Namespace) -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # Enable cuDNN benchmark for optimal convolution algorithm selection
+    torch.backends.cudnn.benchmark = True
+
+    # TF32: faster matmul on Ampere+ with no code overhead (unlike AMP)
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+
+    print(f"Device: {device} | TF32: enabled | cuDNN benchmark: True | compile: {args.compile}")
+
     # Create a per-run directory under the base logs directory, formatted as YYYYMMDD-HHMMSS
     run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = Path(args.log_dir) / run_id
@@ -372,6 +382,12 @@ def train(args: argparse.Namespace) -> None:
         num_classes=cond_dim,
     ).to(device)
 
+    # torch.compile: fuses small CUDA kernels to reduce launch overhead
+    if args.compile != "none":
+        print(f"Compiling model with mode={args.compile}...")
+        model = torch.compile(model, mode=args.compile)
+        print("Model compiled.")
+
     # Diffusion model
     diffusion = GaussianDiffusion(
         model,
@@ -390,37 +406,61 @@ def train(args: argparse.Namespace) -> None:
 
     step = 0
     while step < args.num_steps:
+        # Per-epoch timing accumulators
+        t_data_load = 0.0
+        t_to_device = 0.0
+        t_forward = 0.0
+        t_backward = 0.0
+        epoch_steps = 0
+        epoch_start = time.perf_counter()
+
+        data_iter_start = time.perf_counter()
         for images, cond in tqdm(dataloader):
-            images = images.to(device)
-            cond = cond.to(device)
+            # --- Data loading time (includes worker fetch + collation) ---
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            t_data_load += time.perf_counter() - data_iter_start
+
+            # --- To-device transfer ---
+            t0 = time.perf_counter()
+            images = images.to(device, non_blocking=True)
+            cond = cond.to(device, non_blocking=True)
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            t_to_device += time.perf_counter() - t0
+
             b = images.size(0)
-            # Normalize images from [0,1] to [-1,1]
+
+            # --- Forward pass (normalize, diffuse, predict) ---
+            t0 = time.perf_counter()
             x_start = diffusion.normalize(images)
-            # Sample random timesteps
             t = torch.randint(0, diffusion.num_timesteps, (b,), device=device).long()
-            # Sample noise
             noise = torch.randn_like(x_start)
-            # Diffuse the image
             x_noisy = diffusion.q_sample(x_start=x_start, t=t, noise=noise)
-            # Predict noise with conditioning (optionally projected)
             cond_in = projection(cond)
             pred_noise = model(x_noisy, t, class_labels=cond_in)
-            # Compute MSE loss per sample
             loss = F.mse_loss(pred_noise, noise, reduction="none")
-            # Average over channels and spatial dimensions
             loss = reduce(loss, "b c h w -> b", "mean")
-            # Apply loss weighting
             weights = extract(loss_weight, t, loss.shape)
             loss = (loss * weights).mean()
-            # Backpropagation
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            t_forward += time.perf_counter() - t0
+
+            # --- Backward pass + optimizer step ---
+            t0 = time.perf_counter()
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            t_backward += time.perf_counter() - t0
 
             # Log loss to Tensorboard
             writer.add_scalar("loss", loss.item(), step)
 
             step += 1
+            epoch_steps += 1
             if step % args.log_every == 0:
                 print(f"step {step} / {args.num_steps}, loss: {loss.item():.6f}")
 
@@ -489,6 +529,22 @@ def train(args: argparse.Namespace) -> None:
                 )
             if step >= args.num_steps:
                 break
+
+            # Reset timer for next iteration's data loading measurement
+            data_iter_start = time.perf_counter()
+
+        # --- Epoch timing summary ---
+        epoch_elapsed = time.perf_counter() - epoch_start
+        print(f"\n{'='*60}")
+        print(f"  Epoch timing breakdown ({epoch_steps} steps):")
+        print(f"    data_load : {t_data_load:8.2f}s  ({100*t_data_load/epoch_elapsed:5.1f}%)")
+        print(f"    to_device : {t_to_device:8.2f}s  ({100*t_to_device/epoch_elapsed:5.1f}%)")
+        print(f"    forward   : {t_forward:8.2f}s  ({100*t_forward/epoch_elapsed:5.1f}%)")
+        print(f"    backward  : {t_backward:8.2f}s  ({100*t_backward/epoch_elapsed:5.1f}%)")
+        other = epoch_elapsed - t_data_load - t_to_device - t_forward - t_backward
+        print(f"    other     : {other:8.2f}s  ({100*other/epoch_elapsed:5.1f}%)")
+        print(f"    TOTAL     : {epoch_elapsed:8.2f}s")
+        print(f"{'='*60}\n")
 
 
 def parse_args() -> argparse.Namespace:
@@ -572,6 +628,13 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help="If > 0, enable a projection MLP on conditioning with this hidden size",
+    )
+    parser.add_argument(
+        "--compile",
+        type=str,
+        default="reduce-overhead",
+        choices=["none", "default", "reduce-overhead", "max-autotune"],
+        help="torch.compile mode (default: reduce-overhead)",
     )
     return parser.parse_args()
 
