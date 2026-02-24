@@ -286,16 +286,38 @@ class CorrosionDataset(Dataset):
         return img_tensor, cond
 
 
+def print_env_diagnostics(device: torch.device) -> None:
+    """Print GPU environment info for debugging performance issues."""
+    print("=" * 60)
+    print("  Environment Diagnostics")
+    print("=" * 60)
+    print(f"  PyTorch      : {torch.__version__}")
+    print(f"  CUDA (runtime): {torch.version.cuda}")
+    if device.type == "cuda":
+        print(f"  GPU           : {torch.cuda.get_device_name(0)}")
+        cap = torch.cuda.get_device_capability(0)
+        print(f"  Compute cap.  : {cap[0]}.{cap[1]}")
+        print(f"  Arch list     : {torch.cuda.get_arch_list()}")
+    print(f"  cuDNN         : {torch.backends.cudnn.version()}")
+    print(f"  TF32 matmul   : {torch.backends.cuda.matmul.allow_tf32}")
+    print(f"  TF32 cuDNN    : {torch.backends.cudnn.allow_tf32}")
+    print("=" * 60)
+
+
 def train(args: argparse.Namespace) -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Enable cuDNN benchmark for optimal convolution algorithm selection
     torch.backends.cudnn.benchmark = True
 
-    # AMP (Automatic Mixed Precision) for Tensor Core utilization
-    use_amp = device.type == "cuda"
-    scaler = torch.amp.GradScaler(enabled=use_amp)
-    print(f"Device: {device} | AMP: {use_amp} | cuDNN benchmark: True")
+    # TF32: use reduced-precision matmul on Ampere+ (faster than FP32,
+    # no GradScaler overhead unlike AMP)
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+
+    print_env_diagnostics(device)
+    print(f"Device: {device} | TF32: enabled | cuDNN benchmark: True")
+    print(f"torch.compile: {args.compile}")
 
     # Create a per-run directory under the base logs directory, formatted as YYYYMMDD-HHMMSS
     run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -381,6 +403,12 @@ def train(args: argparse.Namespace) -> None:
         num_classes=cond_dim,
     ).to(device)
 
+    # Apply torch.compile if requested (fuses small kernels → reduces launch overhead)
+    if args.compile != "none":
+        print(f"Compiling model with mode={args.compile}...")
+        model = torch.compile(model, mode=args.compile)
+        print("Model compiled.")
+
     # Diffusion model
     diffusion = GaussianDiffusion(
         model,
@@ -430,24 +458,21 @@ def train(args: argparse.Namespace) -> None:
             t = torch.randint(0, diffusion.num_timesteps, (b,), device=device).long()
             noise = torch.randn_like(x_start)
             x_noisy = diffusion.q_sample(x_start=x_start, t=t, noise=noise)
-            with torch.amp.autocast(device_type="cuda", enabled=use_amp):
-                cond_in = projection(cond)
-                pred_noise = model(x_noisy, t, class_labels=cond_in)
-                loss = F.mse_loss(pred_noise, noise, reduction="none")
-                loss = reduce(loss, "b c h w -> b", "mean")
-            # Loss weighting in FP32 for numerical stability
+            cond_in = projection(cond)
+            pred_noise = model(x_noisy, t, class_labels=cond_in)
+            loss = F.mse_loss(pred_noise, noise, reduction="none")
+            loss = reduce(loss, "b c h w -> b", "mean")
             weights = extract(loss_weight, t, loss.shape)
             loss = (loss * weights).mean()
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
             t_forward += time.perf_counter() - t0
 
-            # --- Backward pass + optimizer step (AMP-aware) ---
+            # --- Backward pass + optimizer step ---
             t0 = time.perf_counter()
             optimizer.zero_grad()
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            loss.backward()
+            optimizer.step()
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
             t_backward += time.perf_counter() - t0
@@ -624,6 +649,13 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help="If > 0, enable a projection MLP on conditioning with this hidden size",
+    )
+    parser.add_argument(
+        "--compile",
+        type=str,
+        default="none",
+        choices=["none", "default", "reduce-overhead", "max-autotune"],
+        help="torch.compile mode (default: none = disabled)",
     )
     return parser.parse_args()
 

@@ -1,40 +1,52 @@
 #!/bin/bash
-# initiate_exp.sh - Script to distribute experiments to other machines.
+# initiate_debug.sh - Benchmark torch.compile modes on 5090.
+# Runs train_debug.py for 2 epochs (848 steps) with three compile options.
+# Compare the SECOND epoch timing (first epoch includes compilation overhead).
 
-# --- Parameters (Modify these as needed) ---
+set -e
+
+# --- Parameters ---
 ENV_NAME="corrosion"
 PYTHON_VERSION="3.12"
-BATCH_SIZE=${BATCH_SIZE:-32}
-LOG_DIR_BASE=${LOG_DIR_BASE:-"logs/"}
-NUM_STEPS=${NUM_STEPS:-1000}
+BATCH_SIZE=${BATCH_SIZE:-8}
+LOG_DIR_BASE=${LOG_DIR_BASE:-"logs_debug"}
 TRAIN_CSV=${TRAIN_CSV:-"./datasets/Corrosion_cGAN_train.csv"}
 REPO_URL="https://github.com/dalbom/corrosion"
 GDRIVE_FILE_ID="1Cn3QAFoJm8n8NsdOtSFRhBa3qGJjKn-A"
-# -------------------------------------------
 
-# Helper function embedded to avoid external file dependency
-train_model() {
-    local channels="$@"
-    local channel_str=$(echo $channels | tr ' ' '_')
-    
-    echo "========================================"
-    echo "Training Diffusion with channels: $channels"
-    echo "========================================"
-    
+# 3392 samples / batch_size=8 / drop_last = 424 steps/epoch → 2 epochs = 848 steps
+NUM_STEPS=848
+# Set log_every > NUM_STEPS to skip validation sampling during benchmark
+LOG_EVERY=10000
+CHANNELS="S11"
+# ------------------
+
+run_benchmark() {
+    local compile_mode="$1"
+
+    echo ""
+    echo "############################################################"
+    echo "  BENCHMARK: --compile $compile_mode"
+    echo "############################################################"
+    echo ""
+
     python train_debug.py \
         --csv "$TRAIN_CSV" \
         --img_root "./datasets/corrosion_img" \
-        --use_channels $channels \
+        --use_channels $CHANNELS \
         --image_size 128 \
         --timesteps 1000 \
         --sampling_timesteps 250 \
         --batch_size $BATCH_SIZE \
         --lr 8e-5 \
         --num_steps $NUM_STEPS \
-        --log_every 100000 \
-        --save_every $NUM_STEPS \
-        --log_dir "$LOG_DIR_BASE/$channel_str"
-    
+        --log_every $LOG_EVERY \
+        --save_every 0 \
+        --log_dir "$LOG_DIR_BASE/compile_${compile_mode}" \
+        --compile "$compile_mode"
+
+    echo ""
+    echo ">>> Finished: --compile $compile_mode"
     echo ""
 }
 
@@ -67,13 +79,9 @@ fi
 # 2.5 Download and extract dataset from Google Drive
 if [ ! -d "datasets" ]; then
     echo "Dataset (datasets folder) not found. Downloading from Google Drive..."
-    
-    # Install gdown for Google Drive downloads
     pip install gdown
-    
-    # Download using gdown
     gdown --id $GDRIVE_FILE_ID -O datasets.tar
-    
+
     if [ -f "datasets.tar" ]; then
         echo "Extracting dataset..."
         tar -xvf datasets.tar
@@ -90,12 +98,12 @@ fi
 # 3. install dependencies
 pip install --upgrade pip
 if [ -f "requirements.txt" ]; then
-    pip install torch torchvision --extra-index-url https://download.pytorch.org/whl/cu121
+    pip install torch torchvision --extra-index-url https://download.pytorch.org/whl/cu128
     pip install -r requirements.txt
 fi
 pip install -e .
 
-# 4. run experiments
+# 4. Check GPU
 echo "Checking GPU availability..."
 GPU_AVAILABLE=$(python -c "import torch; print(torch.cuda.is_available())")
 
@@ -104,30 +112,21 @@ if [ "$GPU_AVAILABLE" != "True" ]; then
     exit 1
 fi
 
-echo "GPU is available. Starting specified sensor combinations..."
+echo ""
+echo "========================================================="
+echo "  5090 Compile Benchmark: 2 epochs x 3 compile modes"
+echo "  Channels: $CHANNELS | Batch: $BATCH_SIZE | Steps: $NUM_STEPS"
+echo "  Compare the SECOND epoch timing across runs."
+echo "========================================================="
+echo ""
 
-# Machine #1
-# train_model Phase11
-# train_model Phase21
-# train_model S11 S21
-# train_model S11 Phase11
-
-# # Machine #2
-# train_model S11 Phase21
-# train_model S21 Phase11
-# train_model S21 Phase21
-
-# # Machine #3
-# train_model Phase11 Phase21
-# train_model S11 S21 Phase11
-# train_model S11 S21 Phase21
-
-# # Machine #4
-# train_model S11 Phase11 Phase21
-# train_model S21 Phase11 Phase21
-# train_model S11 S21 Phase11 Phase21
+# 5. Run benchmarks
+run_benchmark none
+run_benchmark default
+run_benchmark reduce-overhead
 
 echo "========================================================="
-echo "All experiments initiated successfully!"
-echo "Please send the contents of the logs directory to Haebom."
+echo "All benchmarks completed!"
+echo "Logs saved to: $LOG_DIR_BASE/"
+echo "Please send the terminal output to Haebom."
 echo "========================================================="
