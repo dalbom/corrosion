@@ -143,3 +143,4 @@ backup/
 images/
 *.png
 nohup.out
+checkpoints/

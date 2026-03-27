@@ -208,6 +208,8 @@ def main(args: argparse.Namespace) -> None:
     # load checkpoint first so we can infer architecture (channels, dim) if needed
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=True)
     state_dict = ckpt.get("model", ckpt)
+    # Strip _orig_mod. prefix from torch.compile checkpoints
+    state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
 
     model = KarrasUnet(
         dim=64,
