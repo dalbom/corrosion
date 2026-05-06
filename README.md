@@ -44,14 +44,17 @@ export PYTHONPATH="$PWD/src:${PYTHONPATH:-}"
 python -m sensor_image_recon.cli train \
   --config configs/corrosion/cgan_s11_s21_lpips_bn.yaml
 
-python -m sensor_image_recon.cli infer --run runs/corrosion/cgan/s11_s21_lpips_bn/<run_id>
-python -m sensor_image_recon.cli evaluate --run runs/corrosion/cgan/s11_s21_lpips_bn/<run_id>
+python -m sensor_image_recon.cli infer \
+  --run runs/corrosion/cgan/corrosion_recipe_verification/s11_s21/lpips_bn/seed_001/<run_id>
+
+python -m sensor_image_recon.cli evaluate \
+  --run runs/corrosion/cgan/corrosion_recipe_verification/s11_s21/lpips_bn/seed_001/<run_id>
 ```
 
-Run outputs use:
+Run outputs are immutable and self-contained:
 
 ```text
-runs/{domain}/{method}/{experiment}/{run_id}/
+runs/{domain}/{method}/{study}/{sensor_set}/{recipe}/{seed}/{run_id}/
   config.yaml
   metadata.json
   checkpoints/
@@ -59,6 +62,54 @@ runs/{domain}/{method}/{experiment}/{run_id}/
   samples/
   inference/
   metrics/
+```
+
+For overview across many sensor/method combinations, generate a symlink catalog:
+
+```bash
+python -m sensor_image_recon.cli catalog --runs-root runs
+# or:
+python scripts/generate_catalog.py --runs-root runs --domain corrosion --method cgan
+```
+
+The catalog keeps indexes and symlinks only; checkpoint and image files remain in their run folders.
+
+```text
+runs/catalog/{domain}/{method}/{study}/
+  registered_runs.json
+  leaderboard.csv
+  checkpoints/{sensor_set}/{recipe}/{seed}/best_model.pt -> selected run
+  inference/{sensor_set}/{recipe}/{seed} -> selected run inference directory
+  samples/{sensor_set}/{recipe}/{seed} -> selected run samples directory
+```
+
+If multiple runs have the same config identity, the catalog registers the most recent run and lists older skipped runs in `registered_runs.json` and in the command output.
+
+### Sweeps
+
+Domain-wide inventory lives in `configs/corrosion/domain.yaml`. It defines datasets, supported sensor sets, methods, and recipes. You can generate an interactive sweep config:
+
+```bash
+python scripts/generate_sweep_config.py \
+  --domain-config configs/corrosion/domain.yaml
+```
+
+Or run a prepared sweep:
+
+```bash
+python -m sensor_image_recon.cli sweep \
+  --config configs/sweeps/corrosion/cgan_all_sensors_lpips_bn.yaml
+```
+
+Sweep selections support one method with all sensor sets, one sensor set with all methods, or explicit method/sensor subsets:
+
+```yaml
+selection:
+  methods: [cgan, ddpm]
+  sensor_sets: [s11, s11_s21]
+  recipes: [lpips_bn]
+  seeds: [1, 2, 3]
+stages: [train, infer, evaluate, catalog]
 ```
 
 Legacy entrypoints (`train.py`, `train_dit.py`, `train_cgan.py`, `inference*.py`) remain during transition.
@@ -171,4 +222,3 @@ For detailed explanations of each method, see **[IMGPROC.md](IMGPROC.md)**.
 ### License
 
 Retains the license obligations of upstream components. Ensure you keep attribution and comply with dataset licenses.
-

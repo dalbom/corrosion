@@ -7,9 +7,11 @@ import pytest
 import torch
 from PIL import Image
 
+from sensor_image_recon.core.catalog import generate_catalog
 from sensor_image_recon.core.checkpoint import build_checkpoint_metadata
 from sensor_image_recon.core.config import load_config
 from sensor_image_recon.core.paths import create_run_layout
+from sensor_image_recon.core.sweep import expand_sweep_config
 from sensor_image_recon.data.dataset import SensorImageDataset
 from sensor_image_recon.domains.corrosion import CorrosionDomainAdapter
 from sensor_image_recon.domains.corrosion.metrics import mean_absolute_corrosion_error
@@ -52,6 +54,11 @@ def _base_config(tmp_path: Path, method: str) -> Path:
 domain: corrosion
 method: {method}
 experiment: smoke
+study:
+  name: smoke_study
+variant:
+  sensor_set: s11_s21
+  recipe: lpips_bn
 seed: 7
 run:
   root: {tmp_path / "runs"}
@@ -142,7 +149,17 @@ def test_run_layout_and_checkpoint_metadata_include_required_fields(tmp_path):
         metric_summary={"mace": 5.27},
     )
 
-    assert layout.run_dir == tmp_path / "runs" / "corrosion" / "cgan" / "smoke" / "20260506-test"
+    assert layout.run_dir == (
+        tmp_path
+        / "runs"
+        / "corrosion"
+        / "cgan"
+        / "smoke_study"
+        / "s11_s21"
+        / "lpips_bn"
+        / "seed_007"
+        / "20260506-test"
+    )
     for name in ["checkpoints", "tensorboard", "samples", "inference", "metrics"]:
         assert (layout.run_dir / name).is_dir()
     assert metadata["method"] == "cgan"
@@ -151,6 +168,9 @@ def test_run_layout_and_checkpoint_metadata_include_required_fields(tmp_path):
     assert metadata["channel_list"] == ["S11", "S21"]
     assert metadata["conditioning_normalization_type"] == "batchnorm"
     assert metadata["loss_weights"]["lambda_l1"] == 100.0
+    assert metadata["config_identity"]["sensor_set"] == "s11_s21"
+    assert metadata["config_identity"]["recipe"] == "lpips_bn"
+    assert metadata["config_identity_key"] == "corrosion/cgan/smoke_study/s11_s21/lpips_bn/seed_007"
     assert "git_commit" in metadata
 
 
@@ -171,3 +191,167 @@ def test_cpu_smoke_train_writes_standard_run_metadata(tmp_path, method):
     assert metadata["method"] == method
     assert metadata["domain"] == "corrosion"
     assert metadata["conditioning_normalization_type"] == "batchnorm"
+
+
+def _write_fake_catalog_run(root: Path, run_id: str, mace: float) -> Path:
+    run_dir = root / "corrosion" / "cgan" / "study_a" / "s11_s21" / "lpips_bn" / "seed_001" / run_id
+    (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
+    (run_dir / "inference").mkdir(parents=True, exist_ok=True)
+    (run_dir / "metrics").mkdir(parents=True, exist_ok=True)
+    (run_dir / "checkpoints" / "best_model.pt").write_text(run_id, encoding="utf-8")
+    (run_dir / "checkpoints" / "best_mace_model.pt").write_text(run_id, encoding="utf-8")
+    (run_dir / "inference" / "sample.png").write_text(run_id, encoding="utf-8")
+    config_path = run_dir / "config.yaml"
+    config_path.write_text(
+        """
+domain: corrosion
+method: cgan
+study:
+  name: study_a
+variant:
+  sensor_set: s11_s21
+  recipe: lpips_bn
+seed: 1
+dataset:
+  channels: [S11, S21]
+""",
+        encoding="utf-8",
+    )
+    metadata = {
+        "domain": "corrosion",
+        "method": "cgan",
+        "channel_list": ["S11", "S21"],
+        "config_identity": {
+            "domain": "corrosion",
+            "method": "cgan",
+            "study": "study_a",
+            "sensor_set": "s11_s21",
+            "recipe": "lpips_bn",
+            "seed": 1,
+            "seed_name": "seed_001",
+            "channels": ["S11", "S21"],
+        },
+        "config_identity_key": "corrosion/cgan/study_a/s11_s21/lpips_bn/seed_001",
+        "metric_summary": {"mace": mace},
+    }
+    (run_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+    (run_dir / "metrics" / "summary.json").write_text(json.dumps({"mace": mace}), encoding="utf-8")
+    return run_dir
+
+
+def test_catalog_registers_latest_run_per_configuration(tmp_path):
+    runs_root = tmp_path / "runs"
+    older = _write_fake_catalog_run(runs_root, "20260506-111111", mace=6.0)
+    newer = _write_fake_catalog_run(runs_root, "20260506-222222", mace=5.2)
+
+    result = generate_catalog(runs_root)
+
+    assert len(result.entries) == 1
+    entry = result.entries[0]
+    assert entry.selected_run == newer
+    assert entry.skipped_runs == [older]
+    checkpoint_link = (
+        runs_root
+        / "catalog"
+        / "corrosion"
+        / "cgan"
+        / "study_a"
+        / "checkpoints"
+        / "s11_s21"
+        / "lpips_bn"
+        / "seed_001"
+        / "best_model.pt"
+    )
+    inference_link = (
+        runs_root
+        / "catalog"
+        / "corrosion"
+        / "cgan"
+        / "study_a"
+        / "inference"
+        / "s11_s21"
+        / "lpips_bn"
+        / "seed_001"
+    )
+    assert checkpoint_link.is_symlink()
+    assert checkpoint_link.resolve() == newer / "checkpoints" / "best_model.pt"
+    assert inference_link.is_symlink()
+    registered = json.loads(
+        (runs_root / "catalog" / "corrosion" / "cgan" / "study_a" / "registered_runs.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert registered[0]["selected_run"] == str(newer)
+    assert registered[0]["skipped_runs"] == [str(older)]
+
+
+def test_sweep_config_expands_selected_methods_sensor_sets_and_seeds(tmp_path):
+    (tmp_path / "methods").mkdir()
+    (tmp_path / "recipes").mkdir()
+    (tmp_path / "methods" / "cgan.yaml").write_text("method: cgan\narchitecture:\n  latent_dim: 8\n", encoding="utf-8")
+    (tmp_path / "methods" / "dit.yaml").write_text("method: dit\narchitecture:\n  depth: 1\n", encoding="utf-8")
+    (tmp_path / "recipes" / "lpips_bn.yaml").write_text(
+        """
+loss:
+  recipe: l1_ssim_lpips
+  lambda_l1: 100
+conditioning:
+  norm_type: batchnorm
+""",
+        encoding="utf-8",
+    )
+    domain_config = tmp_path / "domain.yaml"
+    domain_config.write_text(
+        """
+domain: corrosion
+run:
+  root: runs
+datasets:
+  default:
+    train_csv: train.csv
+    val_csv: val.csv
+    test_csv: test.csv
+    img_root: datasets
+    image_size: 128
+sensor_sets:
+  s11: [S11]
+  s11_s21: [S11, S21]
+methods:
+  cgan:
+    config: methods/cgan.yaml
+    recipes: [lpips_bn]
+  dit:
+    config: methods/dit.yaml
+    recipes: [lpips_bn]
+recipes:
+  lpips_bn:
+    config: recipes/lpips_bn.yaml
+""",
+        encoding="utf-8",
+    )
+    sweep_config = tmp_path / "sweep.yaml"
+    sweep_config.write_text(
+        f"""
+domain_config: {domain_config}
+study:
+  name: selected_sweep
+selection:
+  methods: [cgan, dit]
+  sensor_sets: [s11, s11_s21]
+  recipes: [lpips_bn]
+  seeds: [1, 3]
+stages: [train, infer, evaluate, catalog]
+""",
+        encoding="utf-8",
+    )
+
+    expanded = expand_sweep_config(sweep_config)
+
+    assert len(expanded) == 8
+    identity_keys = {config["config_identity_key"] for config in expanded}
+    assert "corrosion/cgan/selected_sweep/s11/lpips_bn/seed_001" in identity_keys
+    assert "corrosion/dit/selected_sweep/s11_s21/lpips_bn/seed_003" in identity_keys
+    s11_config = next(config for config in expanded if config["variant"]["sensor_set"] == "s11")
+    assert s11_config["dataset"]["channels"] == ["S11"]
+    assert s11_config["conditioning"]["norm_type"] == "batchnorm"
+    assert s11_config["stages"] == ["train", "infer", "evaluate", "catalog"]

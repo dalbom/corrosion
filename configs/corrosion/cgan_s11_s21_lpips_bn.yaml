@@ -1,6 +1,11 @@
 domain: corrosion
 method: cgan
 experiment: s11_s21_lpips_bn
+study:
+  name: corrosion_recipe_verification
+variant:
+  sensor_set: s11_s21
+  recipe: lpips_bn
 seed: 1
 run:
   root: runs
@@ -21,6 +26,7 @@ training:
   lambda_gp: 10.0
   val_sample_size: 0
 loss:
+  recipe: l1_ssim_lpips
   lambda_l1: 100.0
   lambda_ssim: 50.0
   lambda_perceptual: 10.0

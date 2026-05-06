@@ -4,6 +4,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from sensor_image_recon.core.identity import attach_config_identity
+
 
 def current_git_commit() -> str:
     try:
@@ -24,6 +26,8 @@ def build_checkpoint_metadata(
     architecture: str,
     metric_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if "config_identity" not in config:
+        attach_config_identity(config)
     dataset_config = dict(config.get("dataset", {}))
     channels = list(dataset_config.get("channels", []))
     loss = dict(config.get("loss", {}))
@@ -41,6 +45,8 @@ def build_checkpoint_metadata(
             "denoising_weight": float(loss.get("denoising_weight", 1.0)),
         },
         "seed": int(config.get("seed", config.get("training", {}).get("seed", 0))),
+        "config_identity": dict(config["config_identity"]),
+        "config_identity_key": str(config["config_identity_key"]),
         "metric_summary": metric_summary or {},
         "git_commit": current_git_commit(),
     }

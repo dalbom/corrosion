@@ -1,0 +1,32 @@
+domain: corrosion
+run:
+  root: runs
+
+datasets:
+  default:
+    train_csv: datasets/Corrosion_cGAN_train.csv
+    val_csv: datasets/Corrosion_cGAN_validation.csv
+    test_csv: datasets/Corrosion_test.csv
+    img_root: datasets
+    image_size: 128
+
+sensor_sets:
+  s11: [S11]
+  s21: [S21]
+  s11_s21: [S11, S21]
+  s11_s12_s21_s22: [S11, S12, S21, S22]
+
+methods:
+  cgan:
+    config: ../methods/cgan.yaml
+    recipes: [lpips_bn]
+  ddpm:
+    config: ../methods/ddpm.yaml
+    recipes: [lpips_bn]
+  dit:
+    config: ../methods/dit.yaml
+    recipes: [lpips_bn]
+
+recipes:
+  lpips_bn:
+    config: ../recipes/l1_ssim_lpips_batchnorm.yaml

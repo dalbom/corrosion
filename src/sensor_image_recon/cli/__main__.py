@@ -4,7 +4,9 @@ import argparse
 import json
 from pathlib import Path
 
+from sensor_image_recon.core.catalog import format_catalog_result, generate_catalog
 from sensor_image_recon.core.config import load_config
+from sensor_image_recon.core.sweep import run_sweep_config
 from sensor_image_recon.evaluation.report import evaluate_generated
 from sensor_image_recon.methods.registry import get_method
 
@@ -36,6 +38,22 @@ def _cmd_evaluate(args: argparse.Namespace) -> None:
     print(json.dumps(metrics, sort_keys=True))
 
 
+def _cmd_sweep(args: argparse.Namespace) -> None:
+    run_dirs = run_sweep_config(args.config)
+    for run_dir in run_dirs:
+        print(run_dir)
+
+
+def _cmd_catalog(args: argparse.Namespace) -> None:
+    result = generate_catalog(
+        args.runs_root,
+        domain=args.domain,
+        method=args.method,
+        refresh=not args.no_refresh,
+    )
+    print(format_catalog_result(result))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m sensor_image_recon.cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -53,6 +71,17 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--run", required=True)
     evaluate.add_argument("--generated-root", default=None)
     evaluate.set_defaults(func=_cmd_evaluate)
+
+    sweep = sub.add_parser("sweep", help="Run train/infer/evaluate for a sweep YAML config")
+    sweep.add_argument("--config", required=True)
+    sweep.set_defaults(func=_cmd_sweep)
+
+    catalog = sub.add_parser("catalog", help="Generate symlink catalog views from runs")
+    catalog.add_argument("--runs-root", default="runs")
+    catalog.add_argument("--domain", default=None)
+    catalog.add_argument("--method", default=None)
+    catalog.add_argument("--no-refresh", action="store_true")
+    catalog.set_defaults(func=_cmd_catalog)
 
     return parser
 

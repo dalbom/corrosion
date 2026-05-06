@@ -6,6 +6,8 @@ from typing import Any
 
 import yaml
 
+from sensor_image_recon.core.identity import attach_config_identity
+
 
 DEFAULTS: dict[str, Any] = {
     "domain": "corrosion",
@@ -79,6 +81,8 @@ def load_config(path: str | Path) -> dict[str, Any]:
     if config["training"].get("seed") is None:
         config["training"]["seed"] = config.get("seed", 0)
     config["seed"] = config["training"]["seed"]
+    if "domain" in config and "method" in config:
+        attach_config_identity(config)
     return config
 
 

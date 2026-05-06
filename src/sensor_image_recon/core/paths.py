@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from sensor_image_recon.core.identity import attach_config_identity
+
 
 @dataclass(frozen=True)
 class RunLayout:
@@ -18,11 +20,15 @@ class RunLayout:
 def create_run_layout(config: dict, run_id: str | None = None) -> RunLayout:
     run_id = run_id or datetime.now().strftime("%Y%m%d-%H%M%S")
     root = Path(config.get("run", {}).get("root", "runs"))
+    identity = config.get("config_identity") or attach_config_identity(config)["config_identity"]
     run_dir = (
         root
-        / config["domain"]
-        / config["method"]
-        / config.get("experiment", "default")
+        / identity["domain"]
+        / identity["method"]
+        / identity["study"]
+        / identity["sensor_set"]
+        / identity["recipe"]
+        / identity["seed_name"]
         / run_id
     )
     layout = RunLayout(
