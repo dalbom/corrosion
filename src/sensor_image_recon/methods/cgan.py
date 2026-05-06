@@ -44,6 +44,53 @@ def _tensor_mace(real: torch.Tensor, generated: torch.Tensor) -> float:
     return float(torch.abs(real01.mean(dim=(1, 2, 3)) - gen01.mean(dim=(1, 2, 3))).mean().item() * 100.0)
 
 
+@torch.no_grad()
+def _validate(
+    *,
+    config: dict,
+    generator: Generator,
+    val_loader: DataLoader,
+    device: torch.device,
+    latent_dim: int,
+    lpips_fn,
+) -> dict[str, float | None]:
+    generator.eval()
+    max_samples = int(config.get("training", {}).get("val_sample_size", 64))
+    seen = 0
+    totals = {"l1": 0.0, "ssim": 0.0, "mace": 0.0}
+    lpips_total = 0.0
+    lpips_seen = 0
+    for real_images, cond, _ in val_loader:
+        if max_samples > 0 and seen >= max_samples:
+            break
+        if max_samples > 0:
+            remaining = max_samples - seen
+            real_images = real_images[:remaining]
+            cond = cond[:remaining]
+        real_images = real_images.to(device)
+        cond = cond.to(device)
+        noise = torch.randn(cond.size(0), latent_dim, device=device)
+        fake_images = generator(noise, cond)
+        parts = reconstruction_losses(fake_images, real_images, lpips_fn=lpips_fn)
+        batch_n = real_images.size(0)
+        totals["l1"] += float(parts["l1"].item()) * batch_n
+        totals["ssim"] += float(1.0 - parts["ssim"].item()) * batch_n
+        totals["mace"] += _tensor_mace(real_images, fake_images) * batch_n
+        if lpips_fn is not None:
+            lpips_total += float(parts["perceptual"].item()) * batch_n
+            lpips_seen += batch_n
+        seen += batch_n
+    generator.train()
+    if seen == 0:
+        raise ValueError("Validation loader produced no samples")
+    return {
+        "l1": totals["l1"] / seen,
+        "ssim": totals["ssim"] / seen,
+        "lpips": None if lpips_fn is None or lpips_seen == 0 else lpips_total / lpips_seen,
+        "mace": totals["mace"] / seen,
+    }
+
+
 def train(config: dict) -> Path:
     seed_everything(int(config.get("seed", 0)))
     device = _device(config)
@@ -51,7 +98,9 @@ def train(config: dict) -> Path:
     init_run_files(config, layout)
 
     train_dataset = build_dataset(config, "train")
+    val_dataset = build_dataset(config, "val")
     loader = build_loader(config, train_dataset, shuffle=True)
+    val_loader = build_loader(config, val_dataset, shuffle=False)
     cond_dim = train_dataset.get_cond_dim()
     arch = config.get("architecture", {})
     training = config.get("training", {})
@@ -119,38 +168,51 @@ def train(config: dict) -> Path:
             generator_loss.backward()
             optimizer_g.step()
 
-            metrics = {
-                "l1": float(recon_parts["l1"].detach().item()),
-                "ssim": float(1.0 - recon_parts["ssim"].detach().item()),
-                "lpips": None if lpips_fn is None else float(recon_parts["perceptual"].detach().item()),
-                "mace": _tensor_mace(real_images, fake_images),
-            }
-            score = select_score(config, metrics)
-            if score < best_score:
-                best_score = score
-                best_metrics = metrics
-                payload = checkpoint_payload(
-                    config=config,
-                    architecture="gan",
-                    metric_summary=metrics,
-                    state={
-                        "generator_state_dict": generator.state_dict(),
-                        "critic_state_dict": critic.state_dict(),
-                        "optimizer_G_state_dict": optimizer_g.state_dict(),
-                        "optimizer_C_state_dict": optimizer_c.state_dict(),
-                        "cond_dim": cond_dim,
-                        "use_channels": list(config["dataset"]["channels"]),
-                        "image_size": int(config["dataset"].get("image_size", 128)),
-                        "latent_dim": latent_dim,
-                        "ngf": int(arch.get("ngf", 128)),
-                        "ndf": int(arch.get("ndf", 128)),
-                        "cond_norm_type": cond_norm_type,
-                    },
-                )
-                save_best_checkpoint(layout.checkpoints_dir / "best_model.pt", payload)
-
             if max_batches and batch_idx + 1 >= max_batches:
                 break
+
+        metrics = _validate(
+            config=config,
+            generator=generator,
+            val_loader=val_loader,
+            device=device,
+            latent_dim=latent_dim,
+            lpips_fn=lpips_fn,
+        )
+        score = select_score(config, metrics)
+        print(
+            f"epoch {_epoch}/{epochs} "
+            f"val_l1={metrics['l1']:.4f} "
+            f"val_ssim={metrics['ssim']:.4f} "
+            f"val_lpips={metrics['lpips'] if metrics['lpips'] is not None else 'n/a'} "
+            f"val_mace={metrics['mace']:.2f} "
+            f"score={score:.4f}",
+            flush=True,
+        )
+        if score < best_score:
+            best_score = score
+            best_metrics = metrics
+            payload = checkpoint_payload(
+                config=config,
+                architecture="gan",
+                metric_summary=metrics,
+                state={
+                    "epoch": _epoch,
+                    "generator_state_dict": generator.state_dict(),
+                    "critic_state_dict": critic.state_dict(),
+                    "optimizer_G_state_dict": optimizer_g.state_dict(),
+                    "optimizer_C_state_dict": optimizer_c.state_dict(),
+                    "cond_dim": cond_dim,
+                    "use_channels": list(config["dataset"]["channels"]),
+                    "image_size": int(config["dataset"].get("image_size", 128)),
+                    "latent_dim": latent_dim,
+                    "ngf": int(arch.get("ngf", 128)),
+                    "ndf": int(arch.get("ndf", 128)),
+                    "cond_norm_type": cond_norm_type,
+                    "selection_score": score,
+                },
+            )
+            save_best_checkpoint(layout.checkpoints_dir / "best_model.pt", payload)
 
     write_metadata(config, layout, "gan", best_metrics)
     return layout.run_dir
