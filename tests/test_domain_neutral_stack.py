@@ -19,8 +19,9 @@ from sensor_image_recon.methods.registry import get_method, list_methods
 
 
 def _write_corrosion_fixture(root: Path, n: int = 4) -> tuple[Path, Path]:
-    dataset_root = root / "datasets"
-    image_root = dataset_root / "corrosion_img"
+    dataset_root = root / "datasets" / "corrosion"
+    split_root = dataset_root / "splits"
+    image_root = dataset_root / "images"
     rows = []
     for i in range(n):
         specimen = f"{61 + i}"
@@ -41,7 +42,8 @@ def _write_corrosion_fixture(root: Path, n: int = 4) -> tuple[Path, Path]:
                 "Phase21": " ".join(str(float(j + i + 30)) for j in range(6)),
             }
         )
-    csv_path = dataset_root / "Corrosion_train.csv"
+    split_root.mkdir(parents=True, exist_ok=True)
+    csv_path = split_root / "train.csv"
     pd.DataFrame(rows).to_csv(csv_path, index=False)
     return csv_path, dataset_root
 
@@ -66,6 +68,7 @@ dataset:
   val_csv: {csv_path}
   test_csv: {csv_path}
   img_root: {dataset_root}
+  image_subdir: images
   image_size: 128
   channels: [S11, S21]
 training:
@@ -106,7 +109,12 @@ architecture:
 
 def test_corrosion_dataset_uses_adapter_condition_parser_and_red_target(tmp_path):
     csv_path, dataset_root = _write_corrosion_fixture(tmp_path, n=2)
-    adapter = CorrosionDomainAdapter({"img_root": str(dataset_root)})
+    adapter = CorrosionDomainAdapter(
+        {
+            "img_root": str(dataset_root),
+            "image_subdir": "images",
+        }
+    )
 
     dataset = SensorImageDataset(
         csv_path=csv_path,
@@ -123,6 +131,21 @@ def test_corrosion_dataset_uses_adapter_condition_parser_and_red_target(tmp_path
     assert cond.dtype == torch.float32
     assert sample_id.startswith("0525_61_")
     assert dataset.get_cond_dim() == 12
+
+
+def test_corrosion_adapter_uses_domain_image_subdir_layout(tmp_path):
+    csv_path, dataset_root = _write_corrosion_fixture(tmp_path, n=1)
+    row = pd.read_csv(csv_path).iloc[0]
+    domain_root = tmp_path / "datasets" / "corrosion"
+    target = domain_root / "images" / "61" / f"{row['filename']}.png"
+    adapter = CorrosionDomainAdapter(
+        {
+            "img_root": str(domain_root),
+            "image_subdir": "images",
+        }
+    )
+
+    assert adapter.target_path(row) == target
 
 
 def test_corrosion_mace_metric_is_raw_mean_difference():

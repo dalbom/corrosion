@@ -25,14 +25,15 @@ pip install denoising-diffusion-pytorch einops tqdm pillow pandas tensorboard sc
 
 See `DATASET.md` for details.
 
-- CSV files: `datasets/Corrosion_train.csv` and `datasets/Corrosion_test.csv`
+- CSV split files: `datasets/corrosion/splits/train.csv`, `val.csv`, and `test.csv`
 - Columns: `filename`, `S11`, `S21`, `Phase11`, `Phase21`
 - Each measurement column is a single string with 201 space‑separated floats
-- Ground‑truth images live under `datasets/corrosion_img/<SAMPLE_INDEX>/<filename>.png`
+- Ground‑truth images live under `datasets/corrosion/images/<SAMPLE_INDEX>/<filename>.png`
   - The `<SAMPLE_INDEX>` is the second token of `filename` split by `_`
+- Raw S-parameter files, when needed for provenance, live under `datasets/corrosion/sparameters/<SAMPLE_INDEX>/`
 
 Example filename → image path mapping:
-- `0525_61_30.89263840450541_augmented` → `datasets/corrosion_img/61/0525_61_30.89263840450541_augmented.png`
+- `0525_61_30.89263840450541_augmented` → `datasets/corrosion/images/61/0525_61_30.89263840450541_augmented.png`
 
 ### Quick Start
 
@@ -119,9 +120,9 @@ You can also see `run.sh` for example commands.
 
 ```bash
 python train.py \
-  --csv        ./datasets/Corrosion_train.csv \
-  --val_csv    ./datasets/Corrosion_test.csv \
-  --img_root   ./datasets/corrosion_img \
+  --csv        ./datasets/corrosion/splits/train_legacy.csv \
+  --val_csv    ./datasets/corrosion/splits/test.csv \
+  --img_root   ./datasets/corrosion/images \
   --use_channels S11 S21 Phase11 \
   --image_size 64 \
   --timesteps 1000 \
@@ -145,9 +146,9 @@ Key notes:
 ```bash
 python inference.py \
   --checkpoint ./logs_ext/20250816-213838/model_step_400000.pt \
-  --csv ./datasets/Corrosion_test.csv \
+  --csv ./datasets/corrosion/splits/test.csv \
   --output ./output/S11_S21_400k \
-  --img_root ./datasets/corrosion_img \
+  --img_root ./datasets/corrosion/images \
   --use_channels S11 S21 \
   --image_size 64 \
   --timesteps 1000 \
@@ -166,8 +167,8 @@ Compare generated images against ground truth (on the red channel):
 
 ```bash
 python compare.py \
-  --csv ./datasets/Corrosion_test.csv \
-  --img_root ./datasets/corrosion_img \
+  --csv ./datasets/corrosion/splits/test.csv \
+  --img_root ./datasets/corrosion/images \
   --gen_root ./output/S11_S21_400k \
   --out_csv ./output/S11_S21_400k_metrics.csv
 ```

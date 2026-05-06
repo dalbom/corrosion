@@ -19,7 +19,10 @@ class CorrosionDomainAdapter:
     def __init__(self, dataset_config: dict):
         img_root = dataset_config.get("img_root", "datasets")
         self.img_root = Path(img_root)
-        if self.img_root.name == "corrosion_img":
+        image_subdir = dataset_config.get("image_subdir")
+        if image_subdir:
+            self.image_root = self.img_root / str(image_subdir)
+        elif self.img_root.name in {"corrosion_img", "images"}:
             self.image_root = self.img_root
         else:
             self.image_root = self.img_root / "corrosion_img"

@@ -6,8 +6,8 @@ Usage:
     python scripts/legacy/run_histogram_matching.py \
         --gen_dir results/baseline/ddpm/trial1/S11 \
         --corrected_dir results/corrected/ddpm/trial1/S11 \
-        --train_csv datasets/Corrosion_cGAN_train.csv \
-        --img_root datasets/corrosion_img
+        --train_csv datasets/corrosion/splits/train.csv \
+        --img_root datasets/corrosion/images
 """
 import argparse
 import os
@@ -39,8 +39,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--gen_dir", required=True, help="Dir with generated images (sensor subfolder)")
     p.add_argument("--corrected_dir", required=True, help="Output dir for corrected images")
-    p.add_argument("--train_csv", default="datasets/Corrosion_cGAN_train.csv")
-    p.add_argument("--img_root", default="datasets/corrosion_img")
+    p.add_argument("--train_csv", default="datasets/corrosion/splits/train.csv")
+    p.add_argument("--img_root", default="datasets/corrosion/images")
     args = p.parse_args()
 
     # Load training reference distribution

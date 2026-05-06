@@ -9,10 +9,11 @@ seed: 1
 run:
   root: runs
 dataset:
-  train_csv: datasets/Corrosion_cGAN_train.csv
-  val_csv: datasets/Corrosion_cGAN_validation.csv
-  test_csv: datasets/Corrosion_test.csv
-  img_root: datasets
+  train_csv: datasets/corrosion/splits/train.csv
+  val_csv: datasets/corrosion/splits/val.csv
+  test_csv: datasets/corrosion/splits/test.csv
+  img_root: datasets/corrosion
+  image_subdir: images
   image_size: 128
   channels: [S11, S21]
 training:

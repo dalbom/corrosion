@@ -26,7 +26,7 @@ Usage:
 
 Input:
     - generated/: Directory containing generated images by sensor type
-    - datasets/Corrosion_train.csv: Reference distribution from training data
+    - datasets/corrosion/splits/train.csv: Reference distribution from training data
     - datasets/test/: Real test images for error calculation
 
 Output:
@@ -283,10 +283,9 @@ def main():
         return
 
     # --- 2. Setup Paths and Data ---
-    #train_csv_path = "datasets/Corrosion_train.csv"
-    train_csv_path = "datasets/Corrosion_cGAN_train.csv"
+    train_csv_path = "datasets/corrosion/splits/train.csv"
     test_dir = "datasets/test"
-    base_image_dir = "datasets/corrosion_img"
+    base_image_dir = "datasets/corrosion/images"
     generated_images_base_dir = "generated_cGAN"
     corrected_images_base_dir = "corrected_cGAN"
 
