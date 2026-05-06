@@ -1,0 +1,40 @@
+domain: corrosion
+method: cgan
+experiment: s11_s21
+study:
+  name: corrosion_default_verification
+variant:
+  sensor_set: s11_s21
+seed: 1
+run:
+  root: runs
+dataset:
+  train_csv: datasets/corrosion/splits/train.csv
+  val_csv: datasets/corrosion/splits/val.csv
+  test_csv: datasets/corrosion/splits/test.csv
+  img_root: datasets/corrosion
+  image_subdir: images
+  image_size: 128
+  channels: [S11, S21]
+training:
+  epochs: 100
+  batch_size: 32
+  num_workers: 4
+  lr_g: 0.0001
+  lr_c: 0.0001
+  n_critic: 2
+  lambda_gp: 10.0
+  val_sample_size: 0
+loss:
+  lambda_l1: 100.0
+  lambda_ssim: 50.0
+  lambda_perceptual: 10.0
+conditioning:
+  norm_type: batchnorm
+architecture:
+  latent_dim: 128
+  ngf: 128
+  ndf: 128
+  image_size: 128
+inference:
+  target_size: [110, 300]

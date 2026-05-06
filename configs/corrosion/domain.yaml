@@ -1,0 +1,26 @@
+domain: corrosion
+run:
+  root: runs
+
+datasets:
+  default:
+    train_csv: datasets/corrosion/splits/train.csv
+    val_csv: datasets/corrosion/splits/val.csv
+    test_csv: datasets/corrosion/splits/test.csv
+    img_root: datasets/corrosion
+    image_subdir: images
+    image_size: 128
+
+sensor_sets:
+  s11: [S11]
+  s21: [S21]
+  s11_s21: [S11, S21]
+  s11_s12_s21_s22: [S11, S12, S21, S22]
+
+methods:
+  cgan:
+    config: ../methods/cgan.yaml
+  ddpm:
+    config: ../methods/ddpm.yaml
+  dit:
+    config: ../methods/dit.yaml

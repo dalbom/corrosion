@@ -1,10 +1,11 @@
-## Corrosion Diffusion: Conditional Image Generation from RF Measurements
+## Sensor Image Reconstruction From Measurement Vectors
 
-This repository trains and evaluates a conditional diffusion model that synthesizes corrosion images from RF measurement vectors. It adapts `denoising_diffusion_pytorch` to condition a UNet on continuous features such as `S11`, `S21`, `Phase11`, and `Phase21`.
+This repository trains and evaluates sensor-conditioned image reconstruction models. The active corrosion domain synthesizes red-channel corrosion images from RF measurement vectors such as `S11`, `S21`, `Phase11`, and `Phase21`; the package layout is domain-neutral so thermal S-parameter reconstruction can be added later through a domain adapter.
 
 - Single‑channel target images are used (red channel of RGB).
 - Conditioning is a concatenated float vector (length 201 per selected channel).
-- Training, inference, and evaluation scripts are included.
+- Active methods: DDPM, DiT, and cGAN.
+- New pipeline metrics are computed on raw generated images only. Histogram matching is archived under `scripts/legacy/` for historical comparisons.
 
 ### Installation
 
@@ -22,99 +23,105 @@ pip install denoising-diffusion-pytorch einops tqdm pillow pandas tensorboard sc
 
 ### Dataset
 
-See `DATASET.md` for details.
+Expected active layout:
 
-- CSV files: `datasets/Corrosion_train.csv` and `datasets/Corrosion_test.csv`
+- CSV split files: `datasets/corrosion/splits/train.csv`, `val.csv`, and `test.csv`
 - Columns: `filename`, `S11`, `S21`, `Phase11`, `Phase21`
 - Each measurement column is a single string with 201 space‑separated floats
-- Ground‑truth images live under `datasets/corrosion_img/<SAMPLE_INDEX>/<filename>.png`
+- Ground‑truth images live under `datasets/corrosion/images/<SAMPLE_INDEX>/<filename>.png`
   - The `<SAMPLE_INDEX>` is the second token of `filename` split by `_`
+- Raw S-parameter files, when needed for provenance, live under `datasets/corrosion/sparameters/<SAMPLE_INDEX>/`
 
 Example filename → image path mapping:
-- `0525_61_30.89263840450541_augmented` → `datasets/corrosion_img/61/0525_61_30.89263840450541_augmented.png`
+- `0525_61_30.89263840450541_augmented` → `datasets/corrosion/images/61/0525_61_30.89263840450541_augmented.png`
 
 ### Quick Start
 
-- Training: `train.py`
-- Inference (image generation): `inference.py`
-- Evaluation (MAE/MSE/PSNR/SSIM on red channel): `compare.py`
-
-You can also see `run.sh` for example commands.
-
-### Training
+New config-driven entrypoints:
 
 ```bash
-python train.py \
-  --csv        ./datasets/Corrosion_train.csv \
-  --val_csv    ./datasets/Corrosion_test.csv \
-  --img_root   ./datasets/corrosion_img \
-  --use_channels S11 S21 Phase11 \
-  --image_size 64 \
-  --timesteps 1000 \
-  --sampling_timesteps 250 \
-  --batch_size 16 \
-  --lr 8e-5 \
-  --num_steps 1000000 \
-  --log_every 10000 \
-  --save_every 100000 \
-  --log_dir ./logs_ext
+export PYTHONPATH="$PWD/src:${PYTHONPATH:-}"
+
+python -m sensor_image_recon.cli train \
+  --config configs/corrosion/cgan_s11_s21.yaml
+
+python -m sensor_image_recon.cli infer \
+  --run runs/corrosion/cgan/corrosion_default_verification/s11_s21/seed_001/<run_id>
+
+python -m sensor_image_recon.cli evaluate \
+  --run runs/corrosion/cgan/corrosion_default_verification/s11_s21/seed_001/<run_id>
 ```
 
-Key notes:
-- Images are read as RGB but only the red channel is used and normalized to `[-1, 1]`.
-- Conditioning dimension is `201 * len(--use_channels)` (e.g., `402` for `S11 S21`).
-- Optional: `--use_mlp <hidden_dim>` enables a projection MLP applied to the conditioning vector.
-- Checkpoints and TensorBoard logs are written under a timestamped subdirectory in `--log_dir` (default `./logs_ext/<YYYYMMDD-HHMMSS>`).
+Run outputs are immutable and self-contained:
 
-### Inference (Generate Images)
+```text
+runs/{domain}/{method}/{study}/{sensor_set}/{seed}/{run_id}/
+  config.yaml
+  metadata.json
+  checkpoints/
+  tensorboard/
+  samples/
+  inference/
+  metrics/
+```
+
+For overview across many sensor/method combinations, generate a symlink catalog:
 
 ```bash
-python inference.py \
-  --checkpoint ./logs_ext/20250816-213838/model_step_400000.pt \
-  --csv ./datasets/Corrosion_test.csv \
-  --output ./output/S11_S21_400k \
-  --img_root ./datasets/corrosion_img \
-  --use_channels S11 S21 \
-  --image_size 64 \
-  --timesteps 1000 \
-  --sampling_timesteps 250 \
-  --batch_size 16
+python -m sensor_image_recon.cli catalog --runs-root runs
+# or:
+python scripts/generate_catalog.py --runs-root runs --domain corrosion --method cgan
 ```
 
-Behavior:
-- Generates single‑channel images; saved as red‑only RGB PNGs.
-- If the original target image exists, the generated image is resized back to the original resolution before saving.
-- If you trained with `--use_mlp`, pass the same flag and value during inference.
+The catalog keeps indexes and symlinks only; checkpoint and image files remain in their run folders.
 
-### Evaluation
+```text
+runs/catalog/{domain}/{method}/{study}/
+  registered_runs.json
+  leaderboard.csv
+  checkpoints/{sensor_set}/{seed}/best_model.pt -> selected run
+  inference/{sensor_set}/{seed} -> selected run inference directory
+  samples/{sensor_set}/{seed} -> selected run samples directory
+```
 
-Compare generated images against ground truth (on the red channel):
+If multiple runs have the same config identity, the catalog registers the most recent run and lists older skipped runs in `registered_runs.json` and in the command output.
+
+### Sweeps
+
+Domain-wide inventory lives in `configs/corrosion/domain.yaml`. It defines datasets, supported sensor sets, and methods. The L1 + SSIM + LPIPS reconstruction loss with BatchNorm conditioning is the default for every active method. You can generate an interactive sweep config:
 
 ```bash
-python compare.py \
-  --csv ./datasets/Corrosion_test.csv \
-  --img_root ./datasets/corrosion_img \
-  --gen_root ./output/S11_S21_400k \
-  --out_csv ./output/S11_S21_400k_metrics.csv
+python scripts/generate_sweep_config.py \
+  --domain-config configs/corrosion/domain.yaml
 ```
 
-- Outputs per‑image metrics CSV and prints averages for MAE, MSE, PSNR, SSIM.
-- `scikit-image` is optional; if not installed, SSIM will be reported as NaN.
+Or run a prepared sweep:
 
-### Logging
+```bash
+python -m sensor_image_recon.cli sweep \
+  --config configs/sweeps/corrosion/cgan_all_sensors.yaml
+```
 
-- TensorBoard: `tensorboard --logdir ./logs_ext`
-- Checkpoints: `./logs_ext/<run_id>/model_step_*.pt`
+Sweep selections support one method with all sensor sets, one sensor set with all methods, or explicit method/sensor subsets:
+
+```yaml
+selection:
+  methods: [cgan, ddpm]
+  sensor_sets: [s11, s11_s21]
+  seeds: [1, 2, 3]
+stages: [train, infer, evaluate, catalog]
+```
+
+Old one-off entrypoints and run scripts have been moved under `unused/`. They are retained for reference only; new experiments should use `python -m sensor_image_recon.cli` or `scripts/recon.sh`.
 
 ### Tips
 
-- Ensure the `filename` convention and directory structure match `DATASET.md`.
-- For multi‑GPU, consider using `torchrun` or `accelerate` to launch `train.py`.
+- Ensure the `filename` convention and directory structure match the Dataset section above.
 - Adjust `--image_size` to balance speed and fidelity.
 
-### Post Image Processing
+### Legacy Post Image Processing
 
-Generated images often exhibit systematic intensity offsets compared to real images. We provide several correction methods to align the distribution of generated images with real images.
+Histogram matching and other correction utilities are retained only as legacy references. They are not part of the new raw-only evaluation process.
 
 **Available Methods:**
 
@@ -131,14 +138,14 @@ Generated images often exhibit systematic intensity offsets compared to real ima
 **Quick Usage:**
 
 ```bash
-# Apply correction to generated images
-python correct_generated_images.py
+# Apply correction to generated images for historical comparisons
+python scripts/legacy/correct_generated_images.py
 
 # Visualize before/after distributions
-python create_histogram_figure.py
+python scripts/legacy/create_histogram_figure.py
 ```
 
-For detailed explanations of each method, see **[IMGPROC.md](IMGPROC.md)**.
+Detailed legacy notes are archived under `unused/legacy_docs/IMGPROC.md`.
 
 ### Acknowledgements
 
@@ -147,5 +154,3 @@ For detailed explanations of each method, see **[IMGPROC.md](IMGPROC.md)**.
 ### License
 
 Retains the license obligations of upstream components. Ensure you keep attribution and comply with dataset licenses.
-
-

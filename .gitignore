@@ -133,6 +133,7 @@ dmypy.json
 
 logs/
 logs_ext
+runs/
 datasets/
 output/
 .DS_Store
@@ -144,3 +145,9 @@ images/
 *.png
 nohup.out
 checkpoints/
+unused/backup/
+unused/local_scripts/
+unused/local_outputs/
+unused/local_docs/
+unused.tar
+unused.tar.sha256

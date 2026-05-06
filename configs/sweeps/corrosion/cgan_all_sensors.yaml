@@ -1,0 +1,11 @@
+domain_config: ../../corrosion/domain.yaml
+study:
+  name: corrosion_sensor_sweep
+selection:
+  methods: [cgan]
+  sensor_sets: all
+  seeds: [1]
+stages: [train, infer, evaluate, catalog]
+execution:
+  skip_existing: true
+  catalog_at_end: true
