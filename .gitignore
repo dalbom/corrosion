@@ -147,3 +147,4 @@ nohup.out
 checkpoints/
 unused/backup/
 unused/local_scripts/
+unused/local_outputs/
