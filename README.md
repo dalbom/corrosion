@@ -23,7 +23,7 @@ pip install denoising-diffusion-pytorch einops tqdm pillow pandas tensorboard sc
 
 ### Dataset
 
-See `DATASET.md` for details.
+Expected active layout:
 
 - CSV split files: `datasets/corrosion/splits/train.csv`, `val.csv`, and `test.csv`
 - Columns: `filename`, `S11`, `S21`, `Phase11`, `Phase21`
@@ -116,7 +116,7 @@ Old one-off entrypoints and run scripts have been moved under `unused/`. They ar
 
 ### Tips
 
-- Ensure the `filename` convention and directory structure match `DATASET.md`.
+- Ensure the `filename` convention and directory structure match the Dataset section above.
 - Adjust `--image_size` to balance speed and fidelity.
 
 ### Legacy Post Image Processing
@@ -145,7 +145,7 @@ python scripts/legacy/correct_generated_images.py
 python scripts/legacy/create_histogram_figure.py
 ```
 
-For detailed explanations of each method, see **[IMGPROC.md](IMGPROC.md)**.
+Detailed legacy notes are archived under `unused/legacy_docs/IMGPROC.md`.
 
 ### Acknowledgements
 
