@@ -135,6 +135,7 @@ def train(config: dict) -> Path:
     lpips_fn = maybe_init_lpips(config, device)
 
     best_score = float("inf")
+    best_mace = float("inf")
     best_metrics: dict[str, float | None] = {}
     max_batches = int(training.get("max_batches_per_epoch", 0))
     epochs = int(training.get("epochs", 100))
@@ -213,6 +214,30 @@ def train(config: dict) -> Path:
                 },
             )
             save_best_checkpoint(layout.checkpoints_dir / "best_model.pt", payload)
+        if float(metrics["mace"]) < best_mace:
+            best_mace = float(metrics["mace"])
+            payload = checkpoint_payload(
+                config=config,
+                architecture="gan",
+                metric_summary=metrics,
+                state={
+                    "epoch": _epoch,
+                    "generator_state_dict": generator.state_dict(),
+                    "critic_state_dict": critic.state_dict(),
+                    "optimizer_G_state_dict": optimizer_g.state_dict(),
+                    "optimizer_C_state_dict": optimizer_c.state_dict(),
+                    "cond_dim": cond_dim,
+                    "use_channels": list(config["dataset"]["channels"]),
+                    "image_size": int(config["dataset"].get("image_size", 128)),
+                    "latent_dim": latent_dim,
+                    "ngf": int(arch.get("ngf", 128)),
+                    "ndf": int(arch.get("ndf", 128)),
+                    "cond_norm_type": cond_norm_type,
+                    "selection_score": score,
+                    "selection_criterion": "validation_mace",
+                },
+            )
+            save_best_checkpoint(layout.checkpoints_dir / "best_mace_model.pt", payload)
 
     write_metadata(config, layout, "gan", best_metrics)
     return layout.run_dir
