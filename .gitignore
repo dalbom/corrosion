@@ -149,3 +149,5 @@ unused/backup/
 unused/local_scripts/
 unused/local_outputs/
 unused/local_docs/
+unused.tar
+unused.tar.sha256
