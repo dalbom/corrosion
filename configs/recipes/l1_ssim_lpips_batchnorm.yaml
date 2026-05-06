@@ -1,7 +1,0 @@
-loss:
-  recipe: l1_ssim_lpips
-  lambda_l1: 100.0
-  lambda_ssim: 50.0
-  lambda_perceptual: 10.0
-conditioning:
-  norm_type: batchnorm

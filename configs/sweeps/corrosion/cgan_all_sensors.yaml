@@ -4,7 +4,6 @@ study:
 selection:
   methods: [cgan]
   sensor_sets: all
-  recipes: [lpips_bn]
   seeds: [1]
 stages: [train, infer, evaluate, catalog]
 execution:

@@ -23,18 +23,6 @@ def sensor_set_name(config: dict[str, Any]) -> str:
     return slugify("_".join(str(channel) for channel in channels) or "no_sensors")
 
 
-def recipe_name(config: dict[str, Any]) -> str:
-    variant = config.get("variant", {})
-    if variant.get("recipe"):
-        return slugify(str(variant["recipe"]))
-    loss = config.get("loss", {})
-    if loss.get("name"):
-        return slugify(str(loss["name"]))
-    if loss.get("recipe"):
-        return slugify(str(loss["recipe"]))
-    return slugify(str(config.get("experiment", "default")))
-
-
 def study_name(config: dict[str, Any]) -> str:
     study = config.get("study", {})
     if study.get("name"):
@@ -49,7 +37,6 @@ def build_config_identity(config: dict[str, Any]) -> dict[str, Any]:
         "method": slugify(str(config["method"])),
         "study": study_name(config),
         "sensor_set": sensor_set_name(config),
-        "recipe": recipe_name(config),
         "seed": seed,
         "seed_name": seed_name(seed),
         "channels": list(config.get("dataset", {}).get("channels", [])),
@@ -61,14 +48,20 @@ def build_config_identity(config: dict[str, Any]) -> dict[str, Any]:
     return identity
 
 
+def normalize_config_identity(identity: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(identity)
+    normalized.pop("recipe", None)
+    return normalized
+
+
 def config_identity_key(identity: dict[str, Any]) -> str:
+    identity = normalize_config_identity(identity)
     return "/".join(
         [
             str(identity["domain"]),
             str(identity["method"]),
             str(identity["study"]),
             str(identity["sensor_set"]),
-            str(identity["recipe"]),
             str(identity["seed_name"]),
         ]
     )

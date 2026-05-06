@@ -19,14 +19,7 @@ sensor_sets:
 methods:
   cgan:
     config: ../methods/cgan.yaml
-    recipes: [lpips_bn]
   ddpm:
     config: ../methods/ddpm.yaml
-    recipes: [lpips_bn]
   dit:
     config: ../methods/dit.yaml
-    recipes: [lpips_bn]
-
-recipes:
-  lpips_bn:
-    config: ../recipes/l1_ssim_lpips_batchnorm.yaml

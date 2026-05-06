@@ -62,7 +62,6 @@ def compose_run_config(
     *,
     method: str,
     sensor_set: str,
-    recipe: str,
     seed: int,
     study_name: str,
     stages: list[str],
@@ -81,7 +80,6 @@ def compose_run_config(
         {key: deepcopy(inventory[key]) for key in ("domain", "run") if key in inventory},
     )
     config = _deep_merge(config, _load_fragment(inventory, "methods", method))
-    config = _deep_merge(config, _load_fragment(inventory, "recipes", recipe))
     config = _deep_merge(
         config,
         {
@@ -90,7 +88,6 @@ def compose_run_config(
             "study": {"name": study_name},
             "variant": {
                 "sensor_set": sensor_set,
-                "recipe": recipe,
             },
             "seed": int(seed),
             "training": {"seed": int(seed)},
@@ -115,8 +112,6 @@ def expand_sweep(sweep_config: dict[str, Any], sweep_path: str | Path | None = N
         _available_names(inventory, "sensor_sets"),
         "sensor sets",
     )
-    requested_recipes = selection.get("recipes")
-    all_recipes = _available_names(inventory, "recipes")
     seeds = selection.get("seeds", [1])
     if isinstance(seeds, int):
         seeds = [seeds]
@@ -125,23 +120,18 @@ def expand_sweep(sweep_config: dict[str, Any], sweep_path: str | Path | None = N
 
     expanded = []
     for method in methods:
-        method_entry = inventory.get("methods", {}).get(method, {})
-        method_recipes = method_entry.get("recipes") or all_recipes
-        recipes = _selected_names(requested_recipes, [str(name) for name in method_recipes], "recipes")
         for sensor_set in sensor_sets:
-            for recipe in recipes:
-                for seed in seeds:
-                    expanded.append(
-                        compose_run_config(
-                            inventory,
-                            method=method,
-                            sensor_set=sensor_set,
-                            recipe=recipe,
-                            seed=int(seed),
-                            study_name=study_name,
-                            stages=stages,
-                        )
+            for seed in seeds:
+                expanded.append(
+                    compose_run_config(
+                        inventory,
+                        method=method,
+                        sensor_set=sensor_set,
+                        seed=int(seed),
+                        study_name=study_name,
+                        stages=stages,
                     )
+                )
     return expanded
 
 
@@ -155,7 +145,6 @@ def write_sweep_config(
     study_name: str,
     methods: list[str] | str,
     sensor_sets: list[str] | str,
-    recipes: list[str] | str,
     seeds: list[int],
     stages: list[str],
     output_path: str | Path,
@@ -168,7 +157,6 @@ def write_sweep_config(
         "selection": {
             "methods": methods,
             "sensor_sets": sensor_sets,
-            "recipes": recipes,
             "seeds": seeds,
         },
         "stages": stages,

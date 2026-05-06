@@ -1,11 +1,10 @@
 domain: corrosion
-method: ddpm
-experiment: s11_s21_lpips_bn
+method: dit
+experiment: s11_s21
 study:
-  name: corrosion_recipe_verification
+  name: corrosion_default_verification
 variant:
   sensor_set: s11_s21
-  recipe: lpips_bn
 seed: 1
 run:
   root: runs
@@ -17,12 +16,11 @@ dataset:
   image_size: 128
   channels: [S11, S21]
 training:
-  num_steps: 700000
-  batch_size: 32
+  num_steps: 1000000
+  batch_size: 8
   num_workers: 4
-  lr: 0.00008
+  lr: 0.0001
 loss:
-  recipe: l1_ssim_lpips
   denoising_weight: 1.0
   lambda_l1: 100.0
   lambda_ssim: 50.0
@@ -34,7 +32,7 @@ architecture:
   timesteps: 1000
   sampling_timesteps: 250
   objective: pred_noise
-  dim: 64
-  dim_max: 256
-  num_downsamples: 3
-  num_blocks_per_stage: 2
+  patch_size: 4
+  hidden_size: 384
+  depth: 12
+  num_heads: 6

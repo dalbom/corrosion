@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import Any
 
 from sensor_image_recon.core.config import load_config
-from sensor_image_recon.core.identity import build_config_identity, config_identity_key
+from sensor_image_recon.core.identity import (
+    build_config_identity,
+    config_identity_key,
+    normalize_config_identity,
+)
 
 
 @dataclass(frozen=True)
@@ -58,7 +62,8 @@ def _run_record(metadata_path: Path) -> dict[str, Any] | None:
         identity = build_config_identity(config)
     if not identity:
         return None
-    key = metadata.get("config_identity_key") or config_identity_key(identity)
+    identity = normalize_config_identity(identity)
+    key = config_identity_key(identity)
     summary = _read_json(run_dir / "metrics" / "summary.json")
     metrics = summary or metadata.get("metric_summary", {})
     return {
@@ -126,7 +131,7 @@ def _catalog_base(catalog_root: Path, identity: dict[str, Any]) -> Path:
 
 
 def _entry_symlinks(base: Path, identity: dict[str, Any], run_dir: Path) -> list[Path]:
-    leaf = Path(identity["sensor_set"]) / identity["recipe"] / identity["seed_name"]
+    leaf = Path(identity["sensor_set"]) / identity["seed_name"]
     links: list[Path] = []
     for checkpoint_name in ("best_model.pt", "best_mace_model.pt", "last_model.pt"):
         link = _replace_link(
@@ -174,7 +179,6 @@ def _write_catalog_files(catalog_root: Path, entries: list[CatalogEntry]) -> Non
             "method",
             "study",
             "sensor_set",
-            "recipe",
             "seed",
             "selected_run",
             "mace",
@@ -192,7 +196,7 @@ def _write_catalog_files(catalog_root: Path, entries: list[CatalogEntry]) -> Non
                     "selected_run": str(entry.selected_run),
                     **{
                         key: entry.identity.get(key)
-                        for key in ("domain", "method", "study", "sensor_set", "recipe", "seed")
+                        for key in ("domain", "method", "study", "sensor_set", "seed")
                     },
                 }
                 for metric in ("mace", "mae", "mse", "psnr", "ssim"):

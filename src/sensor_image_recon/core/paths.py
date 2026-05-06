@@ -27,7 +27,6 @@ def create_run_layout(config: dict, run_id: str | None = None) -> RunLayout:
         / identity["method"]
         / identity["study"]
         / identity["sensor_set"]
-        / identity["recipe"]
         / identity["seed_name"]
         / run_id
     )

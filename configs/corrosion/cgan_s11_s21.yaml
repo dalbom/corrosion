@@ -1,11 +1,10 @@
 domain: corrosion
-method: dit
-experiment: s11_s21_lpips_bn
+method: cgan
+experiment: s11_s21
 study:
-  name: corrosion_recipe_verification
+  name: corrosion_default_verification
 variant:
   sensor_set: s11_s21
-  recipe: lpips_bn
 seed: 1
 run:
   root: runs
@@ -17,24 +16,24 @@ dataset:
   image_size: 128
   channels: [S11, S21]
 training:
-  num_steps: 1000000
-  batch_size: 8
+  epochs: 100
+  batch_size: 32
   num_workers: 4
-  lr: 0.0001
+  lr_g: 0.0001
+  lr_c: 0.0001
+  n_critic: 2
+  lambda_gp: 10.0
+  val_sample_size: 0
 loss:
-  recipe: l1_ssim_lpips
-  denoising_weight: 1.0
   lambda_l1: 100.0
   lambda_ssim: 50.0
   lambda_perceptual: 10.0
 conditioning:
   norm_type: batchnorm
 architecture:
+  latent_dim: 128
+  ngf: 128
+  ndf: 128
   image_size: 128
-  timesteps: 1000
-  sampling_timesteps: 250
-  objective: pred_noise
-  patch_size: 4
-  hidden_size: 384
-  depth: 12
-  num_heads: 6
+inference:
+  target_size: [110, 300]

@@ -64,7 +64,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--study-name", default=None)
     parser.add_argument("--methods", default=None, help="Comma-separated method names or all.")
     parser.add_argument("--sensor-sets", default=None, help="Comma-separated sensor set names or all.")
-    parser.add_argument("--recipes", default=None, help="Comma-separated recipe names or all.")
     parser.add_argument("--seeds", default=None, help="Comma-separated integer seeds.")
     parser.add_argument("--stages", default=None, help="Comma-separated stages, e.g. train,infer,evaluate,catalog.")
     parser.add_argument("--output", default=None)
@@ -77,7 +76,6 @@ def main() -> None:
     inventory = load_domain_inventory(domain_config)
     methods_available = sorted(inventory.get("methods", {}).keys())
     sensors_available = sorted(inventory.get("sensor_sets", {}).keys())
-    recipes_available = sorted(inventory.get("recipes", {}).keys())
 
     study_name = args.study_name or _prompt_list("Study name", f"{inventory['domain']}_sweep")
     methods = _split_csv(args.methods)
@@ -86,9 +84,6 @@ def main() -> None:
     sensor_sets = _split_csv(args.sensor_sets)
     if sensor_sets is None:
         sensor_sets = _prompt_selection("Sensor sets", sensors_available)
-    recipes = _split_csv(args.recipes)
-    if recipes is None:
-        recipes = _prompt_selection("Recipes", recipes_available)
     seeds = _split_ints(args.seeds)
     if seeds is None:
         seeds = _split_ints(_prompt_list("Seeds", "1"))
@@ -105,7 +100,6 @@ def main() -> None:
         study_name=study_name,
         methods=methods,
         sensor_sets=sensor_sets,
-        recipes=recipes,
         seeds=seeds or [1],
         stages=stages,
         output_path=output,

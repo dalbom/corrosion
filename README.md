@@ -42,19 +42,19 @@ New config-driven entrypoints:
 export PYTHONPATH="$PWD/src:${PYTHONPATH:-}"
 
 python -m sensor_image_recon.cli train \
-  --config configs/corrosion/cgan_s11_s21_lpips_bn.yaml
+  --config configs/corrosion/cgan_s11_s21.yaml
 
 python -m sensor_image_recon.cli infer \
-  --run runs/corrosion/cgan/corrosion_recipe_verification/s11_s21/lpips_bn/seed_001/<run_id>
+  --run runs/corrosion/cgan/corrosion_default_verification/s11_s21/seed_001/<run_id>
 
 python -m sensor_image_recon.cli evaluate \
-  --run runs/corrosion/cgan/corrosion_recipe_verification/s11_s21/lpips_bn/seed_001/<run_id>
+  --run runs/corrosion/cgan/corrosion_default_verification/s11_s21/seed_001/<run_id>
 ```
 
 Run outputs are immutable and self-contained:
 
 ```text
-runs/{domain}/{method}/{study}/{sensor_set}/{recipe}/{seed}/{run_id}/
+runs/{domain}/{method}/{study}/{sensor_set}/{seed}/{run_id}/
   config.yaml
   metadata.json
   checkpoints/
@@ -78,16 +78,16 @@ The catalog keeps indexes and symlinks only; checkpoint and image files remain i
 runs/catalog/{domain}/{method}/{study}/
   registered_runs.json
   leaderboard.csv
-  checkpoints/{sensor_set}/{recipe}/{seed}/best_model.pt -> selected run
-  inference/{sensor_set}/{recipe}/{seed} -> selected run inference directory
-  samples/{sensor_set}/{recipe}/{seed} -> selected run samples directory
+  checkpoints/{sensor_set}/{seed}/best_model.pt -> selected run
+  inference/{sensor_set}/{seed} -> selected run inference directory
+  samples/{sensor_set}/{seed} -> selected run samples directory
 ```
 
 If multiple runs have the same config identity, the catalog registers the most recent run and lists older skipped runs in `registered_runs.json` and in the command output.
 
 ### Sweeps
 
-Domain-wide inventory lives in `configs/corrosion/domain.yaml`. It defines datasets, supported sensor sets, methods, and recipes. You can generate an interactive sweep config:
+Domain-wide inventory lives in `configs/corrosion/domain.yaml`. It defines datasets, supported sensor sets, and methods. The L1 + SSIM + LPIPS reconstruction loss with BatchNorm conditioning is the default for every active method. You can generate an interactive sweep config:
 
 ```bash
 python scripts/generate_sweep_config.py \
@@ -98,7 +98,7 @@ Or run a prepared sweep:
 
 ```bash
 python -m sensor_image_recon.cli sweep \
-  --config configs/sweeps/corrosion/cgan_all_sensors_lpips_bn.yaml
+  --config configs/sweeps/corrosion/cgan_all_sensors.yaml
 ```
 
 Sweep selections support one method with all sensor sets, one sensor set with all methods, or explicit method/sensor subsets:
@@ -107,7 +107,6 @@ Sweep selections support one method with all sensor sets, one sensor set with al
 selection:
   methods: [cgan, ddpm]
   sensor_sets: [s11, s11_s21]
-  recipes: [lpips_bn]
   seeds: [1, 2, 3]
 stages: [train, infer, evaluate, catalog]
 ```
