@@ -1,38 +1,25 @@
-from setuptools import setup, find_packages
+from pathlib import Path
 
-exec(open('denoising_diffusion_pytorch/version.py').read())
+from setuptools import find_packages, setup
+
+
+def _read_requirements():
+    path = Path("requirements.txt")
+    if not path.exists():
+        return []
+    return [
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+
 
 setup(
-  name = 'denoising-diffusion-pytorch',
-  packages = find_packages(),
-  version = __version__,
-  license='MIT',
-  description = 'Denoising Diffusion Probabilistic Models - Pytorch',
-  author = 'Phil Wang',
-  author_email = 'lucidrains@gmail.com',
-  url = 'https://github.com/lucidrains/denoising-diffusion-pytorch',
-  long_description_content_type = 'text/markdown',
-  keywords = [
-    'artificial intelligence',
-    'generative models'
-  ],
-  install_requires=[
-    'accelerate',
-    'einops',
-    'ema-pytorch>=0.4.2',
-    'numpy',
-    'pillow',
-    'pytorch-fid',
-    'scipy',
-    'torch>=2.0',
-    'torchvision',
-    'tqdm'
-  ],
-  classifiers=[
-    'Development Status :: 4 - Beta',
-    'Intended Audience :: Developers',
-    'Topic :: Scientific/Engineering :: Artificial Intelligence',
-    'License :: OSI Approved :: MIT License',
-    'Programming Language :: Python :: 3.6',
-  ],
+    name="sensor-image-recon",
+    version="0.1.0",
+    description="Domain-neutral sensor-conditioned image reconstruction",
+    packages=find_packages() + find_packages(where="src"),
+    package_dir={"sensor_image_recon": "src/sensor_image_recon"},
+    install_requires=_read_requirements(),
+    python_requires=">=3.10",
 )

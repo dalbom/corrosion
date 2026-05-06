@@ -203,7 +203,7 @@ Where T is the transport plan, C is the cost matrix, and p are the probability d
 ### Applying Corrections
 
 ```bash
-python correct_generated_images.py
+python scripts/legacy/correct_generated_images.py
 ```
 
 This interactive script will:
@@ -216,7 +216,7 @@ This interactive script will:
 ### Visualizing Results
 
 ```bash
-python create_histogram_figure.py
+python scripts/legacy/create_histogram_figure.py
 ```
 
 This creates a KDE (Kernel Density Estimate) plot showing:
@@ -228,7 +228,7 @@ This creates a KDE (Kernel Density Estimate) plot showing:
 
 ## Implementation Details
 
-All correction functions are implemented in `correct_generated_images.py`. Key functions:
+All correction functions are implemented in `scripts/legacy/correct_generated_images.py`. Key functions:
 
 - `get_histogram_mapping()` - Computes histogram matching LUT
 - `get_optimal_transport_lut()` - Computes OT-based LUT

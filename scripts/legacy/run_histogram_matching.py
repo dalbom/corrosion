@@ -3,7 +3,7 @@ Non-interactive histogram matching for generated corrosion images.
 Extracted from corrosion/correct_generated_images.py for pipeline automation.
 
 Usage:
-    python run_histogram_matching.py \
+    python scripts/legacy/run_histogram_matching.py \
         --gen_dir results/baseline/ddpm/trial1/S11 \
         --corrected_dir results/corrected/ddpm/trial1/S11 \
         --train_csv datasets/Corrosion_cGAN_train.csv \

@@ -20,7 +20,7 @@ Available Correction Methods:
     7. Optimal Transport (EMD) - Minimize Earth Mover's Distance
 
 Usage:
-    python correct_generated_images.py
+    python scripts/legacy/correct_generated_images.py
     
     Then select a correction method from the interactive menu.
 

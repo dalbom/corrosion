@@ -10,3 +10,9 @@ accelerate
 ema-pytorch>=0.4.2
 pytorch-fid
 tensorboard
+PyYAML
+pytorch-msssim
+lpips
+scikit-image
+opencv-python
+pytest

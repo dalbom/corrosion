@@ -75,7 +75,7 @@ main(parse_args())
             echo "  SKIP $sensor: already corrected"
         else
             echo "  [Histogram] $sensor"
-            python run_histogram_matching.py \
+            python scripts/legacy/run_histogram_matching.py \
                 --gen_dir "$outdir" \
                 --corrected_dir "$corrdir" \
                 --train_csv "$TRAIN_CSV" \

@@ -1,10 +1,11 @@
-## Corrosion Diffusion: Conditional Image Generation from RF Measurements
+## Sensor Image Reconstruction From Measurement Vectors
 
-This repository trains and evaluates a conditional diffusion model that synthesizes corrosion images from RF measurement vectors. It adapts `denoising_diffusion_pytorch` to condition a UNet on continuous features such as `S11`, `S21`, `Phase11`, and `Phase21`.
+This repository trains and evaluates sensor-conditioned image reconstruction models. The active corrosion domain synthesizes red-channel corrosion images from RF measurement vectors such as `S11`, `S21`, `Phase11`, and `Phase21`; the package layout is domain-neutral so thermal S-parameter reconstruction can be added later through a domain adapter.
 
 - Single‑channel target images are used (red channel of RGB).
 - Conditioning is a concatenated float vector (length 201 per selected channel).
-- Training, inference, and evaluation scripts are included.
+- Active methods: DDPM, DiT, and cGAN.
+- New pipeline metrics are computed on raw generated images only. Histogram matching is archived under `scripts/legacy/` for historical comparisons.
 
 ### Installation
 
@@ -35,9 +36,32 @@ Example filename → image path mapping:
 
 ### Quick Start
 
-- Training: `train.py`
-- Inference (image generation): `inference.py`
-- Evaluation (MAE/MSE/PSNR/SSIM on red channel): `compare.py`
+New config-driven entrypoints:
+
+```bash
+export PYTHONPATH="$PWD/src:${PYTHONPATH:-}"
+
+python -m sensor_image_recon.cli train \
+  --config configs/corrosion/cgan_s11_s21_lpips_bn.yaml
+
+python -m sensor_image_recon.cli infer --run runs/corrosion/cgan/s11_s21_lpips_bn/<run_id>
+python -m sensor_image_recon.cli evaluate --run runs/corrosion/cgan/s11_s21_lpips_bn/<run_id>
+```
+
+Run outputs use:
+
+```text
+runs/{domain}/{method}/{experiment}/{run_id}/
+  config.yaml
+  metadata.json
+  checkpoints/
+  tensorboard/
+  samples/
+  inference/
+  metrics/
+```
+
+Legacy entrypoints (`train.py`, `train_dit.py`, `train_cgan.py`, `inference*.py`) remain during transition.
 
 You can also see `run.sh` for example commands.
 
@@ -112,9 +136,9 @@ python compare.py \
 - For multi‑GPU, consider using `torchrun` or `accelerate` to launch `train.py`.
 - Adjust `--image_size` to balance speed and fidelity.
 
-### Post Image Processing
+### Legacy Post Image Processing
 
-Generated images often exhibit systematic intensity offsets compared to real images. We provide several correction methods to align the distribution of generated images with real images.
+Histogram matching and other correction utilities are retained only as legacy references. They are not part of the new raw-only evaluation process.
 
 **Available Methods:**
 
@@ -131,11 +155,11 @@ Generated images often exhibit systematic intensity offsets compared to real ima
 **Quick Usage:**
 
 ```bash
-# Apply correction to generated images
-python correct_generated_images.py
+# Apply correction to generated images for historical comparisons
+python scripts/legacy/correct_generated_images.py
 
 # Visualize before/after distributions
-python create_histogram_figure.py
+python scripts/legacy/create_histogram_figure.py
 ```
 
 For detailed explanations of each method, see **[IMGPROC.md](IMGPROC.md)**.
@@ -147,5 +171,4 @@ For detailed explanations of each method, see **[IMGPROC.md](IMGPROC.md)**.
 ### License
 
 Retains the license obligations of upstream components. Ensure you keep attribution and comply with dataset licenses.
-
 

@@ -19,7 +19,7 @@ Available Correction Methods (same as correct_generated_images.py):
     7. Optimal Transport (EMD) - Minimize Earth Mover's Distance
 
 Usage:
-    python create_histogram_figure.py
+    python scripts/legacy/create_histogram_figure.py
     
     Then select a correction method from the interactive menu.
 

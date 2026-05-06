@@ -78,7 +78,7 @@ PYTHONUNBUFFERED=1 $MICROMAMBA run -n $ENV python inference_cgan.py \
 
 echo ""
 echo "[3/5] Histogram matching..."
-$MICROMAMBA run -n $ENV python run_histogram_matching.py \
+$MICROMAMBA run -n $ENV python scripts/legacy/run_histogram_matching.py \
     --gen_dir "$RAW_NEW" \
     --corrected_dir "$MATCHED_NEW" \
     --train_csv "$TRAIN_CSV" \

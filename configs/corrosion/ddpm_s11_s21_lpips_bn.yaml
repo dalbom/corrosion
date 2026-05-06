@@ -1,0 +1,34 @@
+domain: corrosion
+method: ddpm
+experiment: s11_s21_lpips_bn
+seed: 1
+run:
+  root: runs
+dataset:
+  train_csv: datasets/Corrosion_cGAN_train.csv
+  val_csv: datasets/Corrosion_cGAN_validation.csv
+  test_csv: datasets/Corrosion_test.csv
+  img_root: datasets
+  image_size: 128
+  channels: [S11, S21]
+training:
+  num_steps: 700000
+  batch_size: 32
+  num_workers: 4
+  lr: 0.00008
+loss:
+  denoising_weight: 1.0
+  lambda_l1: 100.0
+  lambda_ssim: 50.0
+  lambda_perceptual: 10.0
+conditioning:
+  norm_type: batchnorm
+architecture:
+  image_size: 128
+  timesteps: 1000
+  sampling_timesteps: 250
+  objective: pred_noise
+  dim: 64
+  dim_max: 256
+  num_downsamples: 3
+  num_blocks_per_stage: 2
