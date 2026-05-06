@@ -1,1 +1,1 @@
-# cGAN package for corrosion image generation
+# cGAN network components reused by sensor_image_recon.

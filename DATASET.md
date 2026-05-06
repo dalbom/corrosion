@@ -9,12 +9,6 @@ datasets/corrosion/splits/
   test.csv
 ```
 
-The legacy pre-validation training split is retained as:
-
-```text
-datasets/corrosion/splits/train_legacy.csv
-```
-
 Each split CSV has five columns: `filename`, `S11`, `S21`, `Phase11`, and `Phase21`.
 Each measurement column is a single string containing 201 space-separated float values.
 

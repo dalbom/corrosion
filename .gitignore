@@ -145,3 +145,5 @@ images/
 *.png
 nohup.out
 checkpoints/
+unused/backup/
+unused/local_scripts/
