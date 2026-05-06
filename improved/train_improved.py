@@ -1,34 +1,29 @@
 """
 Improved diffusion training with:
   - Classifier-Free Guidance (CFG) conditioning dropout
-  - x0-prediction objective (instead of noise prediction)
+  - Flexible prediction objective (pred_x0, pred_v, pred_noise)
   - MACE auxiliary loss on predicted x0
+  - Min-SNR-γ loss weighting (--min_snr_gamma)
+  - Cosine noise schedule (--beta_schedule cosine)
+  - EMA of model weights (--ema_decay)
 
 Supports both KarrasUnet (DDPM) and DiT architectures.
 
 Usage:
-    # DiT with CFG + x0-pred + MACE loss
+    # DiT with CFG + x0-pred + MACE loss (original)
     python improved/train_improved.py \
-        --model_type dit \
-        --csv datasets/Corrosion_cGAN_train.csv \
-        --val_csv datasets/Corrosion_cGAN_validation.csv \
-        --img_root datasets/corrosion_img \
-        --use_channels S11 Phase21 \
-        --batch_size 32 --lr 2e-4 \
-        --p_uncond 0.1 --lambda_mace 10.0
+        --model_type dit --objective pred_x0 \
+        ...
 
-    # DDPM (KarrasUnet) with same improvements
+    # DDPM with all improvements: v-pred + cosine + min-SNR + EMA
     python improved/train_improved.py \
-        --model_type ddpm \
-        --csv datasets/Corrosion_cGAN_train.csv \
-        --val_csv datasets/Corrosion_cGAN_validation.csv \
-        --img_root datasets/corrosion_img \
-        --use_channels S11 Phase21 \
-        --batch_size 32 --lr 2e-4 \
-        --p_uncond 0.1 --lambda_mace 10.0
+        --model_type ddpm --objective pred_v \
+        --beta_schedule cosine --min_snr_gamma 5 --ema_decay 0.9999 \
+        ...
 """
 
 import argparse
+import copy
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -41,6 +36,26 @@ from torch.utils.tensorboard import SummaryWriter
 from torchvision.utils import make_grid
 from einops import reduce
 from tqdm import tqdm
+
+
+class EMA:
+    """Exponential Moving Average of model parameters."""
+
+    def __init__(self, model: nn.Module, decay: float = 0.9999):
+        self.decay = decay
+        self.shadow = {k: v.clone().detach() for k, v in model.state_dict().items()}
+
+    @torch.no_grad()
+    def update(self, model: nn.Module):
+        for k, v in model.state_dict().items():
+            self.shadow[k].lerp_(v, 1.0 - self.decay)
+
+    def state_dict(self):
+        return self.shadow
+
+    def apply_to(self, model: nn.Module):
+        """Temporarily replace model weights with EMA weights."""
+        model.load_state_dict(self.shadow, strict=False)
 
 # Add parent dir to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -172,6 +187,7 @@ def train(args: argparse.Namespace) -> None:
     torch.backends.cudnn.allow_tf32 = True
 
     print(f"Device: {device} | Model: {args.model_type} | Objective: {args.objective}")
+    print(f"Beta schedule: {args.beta_schedule} | Min-SNR-γ: {args.min_snr_gamma}")
     print(f"CFG p_uncond: {args.p_uncond} | MACE lambda: {args.lambda_mace} | "
           f"Guidance scale: {args.guidance_scale}")
 
@@ -226,9 +242,17 @@ def train(args: argparse.Namespace) -> None:
         timesteps=args.timesteps,
         sampling_timesteps=args.sampling_timesteps,
         objective=args.objective,
+        beta_schedule=args.beta_schedule,
+        min_snr_loss_weight=args.min_snr_gamma > 0,
+        min_snr_gamma=args.min_snr_gamma if args.min_snr_gamma > 0 else 5,
     ).to(device)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.0)
+
+    # EMA
+    ema = EMA(model, decay=args.ema_decay) if args.ema_decay > 0 else None
+    if ema:
+        print(f"EMA enabled: decay={args.ema_decay}")
 
     loss_weight = diffusion.loss_weight
     use_cfg_dropout = args.p_uncond > 0
@@ -288,6 +312,9 @@ def train(args: argparse.Namespace) -> None:
             loss.backward()
             optimizer.step()
 
+            if ema is not None:
+                ema.update(model)
+
             # Log to TensorBoard every 100 steps
             if step % 100 == 0:
                 writer.add_scalar("loss/total", loss.item(), step)
@@ -300,14 +327,21 @@ def train(args: argparse.Namespace) -> None:
                       f"loss: {loss.item():.6f} | mse: {loss_mse.item():.6f} | "
                       f"mace: {mace_loss.item():.6f}")
 
-                # Validation sampling with CFG
+                # Validation sampling with CFG (use EMA weights if available)
                 model.eval()
+                if ema is not None:
+                    orig_state = copy.deepcopy(model.state_dict())
+                    ema.apply_to(model)
+
                 sampled = conditioned_sample_cfg(
                     diffusion, model,
                     batch_size=args.val_batch_size,
                     class_labels=val_cond,
                     guidance_scale=args.guidance_scale,
                 )
+
+                if ema is not None:
+                    model.load_state_dict(orig_state)
                 model.train()
 
                 sampled_rgb = to_red_rgb(sampled)
@@ -321,12 +355,15 @@ def train(args: argparse.Namespace) -> None:
             # Save checkpoint
             if args.save_every > 0 and step % args.save_every == 0:
                 ckpt_path = run_dir / f"model_step_{step}.pt"
-                torch.save({
+                ckpt_data = {
                     "step": step,
                     "model": model.state_dict(),
                     "optimizer": optimizer.state_dict(),
                     "args": vars(args),
-                }, ckpt_path)
+                }
+                if ema is not None:
+                    ckpt_data["ema"] = ema.state_dict()
+                torch.save(ckpt_data, ckpt_path)
                 print(f"Saved: {ckpt_path}")
 
             if step >= args.num_steps:
@@ -335,12 +372,15 @@ def train(args: argparse.Namespace) -> None:
     # Final checkpoint (skip if already saved by periodic save)
     if args.save_every <= 0 or step % args.save_every != 0:
         ckpt_path = run_dir / f"model_step_{step}.pt"
-        torch.save({
+        ckpt_data = {
             "step": step,
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
             "args": vars(args),
-        }, ckpt_path)
+        }
+        if ema is not None:
+            ckpt_data["ema"] = ema.state_dict()
+        torch.save(ckpt_data, ckpt_path)
         print(f"Saved final: {ckpt_path}")
 
 
@@ -370,6 +410,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sampling_timesteps", type=int, default=250)
     p.add_argument("--objective", type=str, default="pred_x0",
                    choices=["pred_noise", "pred_x0", "pred_v"])
+    p.add_argument("--beta_schedule", type=str, default="sigmoid",
+                   choices=["linear", "cosine", "sigmoid"],
+                   help="Noise schedule (sigmoid=default, cosine=better for small images)")
+    p.add_argument("--min_snr_gamma", type=float, default=0,
+                   help="Min-SNR-γ loss weighting (0=disabled, 5=recommended)")
+    p.add_argument("--ema_decay", type=float, default=0,
+                   help="EMA decay rate (0=disabled, 0.9999=recommended)")
 
     # Improvements
     p.add_argument("--p_uncond", type=float, default=0.1,

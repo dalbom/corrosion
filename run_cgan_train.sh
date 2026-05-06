@@ -1,6 +1,6 @@
 #!/bin/bash
 # Train WGAN-GP models for all 15 sensor combinations
-# Uses Wasserstein distance with gradient penalty for stable training
+# Uses MACE (Mean Absolute Corrosion Error) for early stopping and model selection
 
 set -e
 
@@ -10,9 +10,10 @@ TRAIN_CSV="datasets/Corrosion_cGAN_train.csv"
 VAL_CSV="datasets/Corrosion_cGAN_validation.csv"
 IMG_ROOT="datasets"
 EPOCHS=100
-PATIENCE=50
+PATIENCE=20
 BATCH_SIZE=32
 N_CRITIC=2
+MACE_SAMPLE_SIZE=64
 
 # Function to train a single model
 train_model() {
@@ -21,7 +22,7 @@ train_model() {
     echo "Training WGAN-GP with channels: $channels"
     echo "========================================"
     
-    $MICROMAMBA run -n $ENV_NAME python train_wgan_gp.py \
+    $MICROMAMBA run -n $ENV_NAME python train_cgan.py \
         --csv $TRAIN_CSV \
         --val_csv $VAL_CSV \
         --img_root $IMG_ROOT \
@@ -29,7 +30,8 @@ train_model() {
         --epochs $EPOCHS \
         --patience $PATIENCE \
         --batch_size $BATCH_SIZE \
-        --n_critic $N_CRITIC
+        --n_critic $N_CRITIC \
+        --mace_sample_size $MACE_SAMPLE_SIZE
     
     echo ""
 }

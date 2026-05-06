@@ -41,27 +41,27 @@ echo "Running inference for all 15 WGAN-GP models..."
 echo ""
 
 # 1-sensor combinations (4 models)
-run_inference "20260108-115417_S11_wgangp" "S11"
-run_inference "20260108-125831_S21_wgangp" "S21"
-run_inference "20260108-140256_Phase11_wgangp" "Ph11"
-run_inference "20260108-150711_Phase21_wgangp" "Ph21"
+run_inference "20260117-081620_S11_wgangp" "S11"
+run_inference "20260117-085712_S21_wgangp" "S21"
+run_inference "20260117-094204_Phase11_wgangp" "Ph11"
+run_inference "20260117-103916_Phase21_wgangp" "Ph21"
 
 # 2-sensor combinations (6 models)
-run_inference "20260108-161108_S11_S21_wgangp" "S11_S21"
-run_inference "20260108-171604_S11_Phase11_wgangp" "S11_Ph11"
-run_inference "20260108-182111_S11_Phase21_wgangp" "S11_Ph21"
-run_inference "20260108-192601_S21_Phase11_wgangp" "S21_Ph11"
-run_inference "20260108-205508_S21_Phase21_wgangp" "S21_Ph21"
-run_inference "20260108-215939_Phase11_Phase21_wgangp" "Ph11_Ph21"
+run_inference "20260117-105255_S11_S21_wgangp" "S11_S21"
+run_inference "20260117-113957_S11_Phase11_wgangp" "S11_Ph11"
+run_inference "20260117-123056_S11_Phase21_wgangp" "S11_Ph21"
+run_inference "20260117-132036_S21_Phase11_wgangp" "S21_Ph11"
+run_inference "20260117-135758_S21_Phase21_wgangp" "S21_Ph21"
+run_inference "20260117-142522_Phase11_Phase21_wgangp" "Ph11_Ph21"
 
 # 3-sensor combinations (4 models)
-run_inference "20260108-230616_S11_S21_Phase11_wgangp" "S11_S21_Ph11"
-run_inference "20260109-001136_S11_S21_Phase21_wgangp" "S11_S21_Ph21"
-run_inference "20260109-011640_S11_Phase11_Phase21_wgangp" "S11_Ph11_Ph21"
-run_inference "20260109-022148_S21_Phase11_Phase21_wgangp" "S21_Ph11_Ph21"
+run_inference "20260117-151935_S11_S21_Phase11_wgangp" "S11_S21_Ph11"
+run_inference "20260117-161246_S11_S21_Phase21_wgangp" "S11_S21_Ph21"
+run_inference "20260117-170836_S11_Phase11_Phase21_wgangp" "S11_Ph11_Ph21"
+run_inference "20260117-172224_S21_Phase11_Phase21_wgangp" "S21_Ph11_Ph21"
 
 # 4-sensor combination (1 model)
-run_inference "20260109-032702_S11_S21_Phase11_Phase21_wgangp" "S11_S21_Ph11_Ph21"
+run_inference "20260117-173651_S11_S21_Phase11_Phase21_wgangp" "S11_S21_Ph11_Ph21"
 
 echo "========================================"
 echo "All inference complete!"

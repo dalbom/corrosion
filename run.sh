@@ -50,13 +50,16 @@
 #   --image_size 128 \
 #   --img_root datasets/corrosion_img
 
-for dir in generated_cGAN/*/; do
+echo -e "Sensor\tMAE\tMSE\tPSNR\tSSIM\tMACE"
+for dir in generated_CVAE/*/; do
   dir_name=$(basename "$dir")
   python evaluate_metrics.py \
     --csv datasets/Corrosion_test.csv \
     --img_root datasets/corrosion_img \
     --gen_root "$dir" \
-    --out_csv "output/${dir_name}_cGAN_metrics.csv"
+    --out_csv "output/${dir_name}_cGAN_metrics.csv" \
+    --table \
+    --sensor "$dir_name"
 done
 
 # python compare.py \

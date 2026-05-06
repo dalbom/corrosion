@@ -42,22 +42,32 @@ def generate_images(args):
         use_channels = args.use_channels
     
     # Create generator and load weights
+    cond_norm_type = checkpoint.get('cond_norm_type', 'none')
     generator = Generator(
         latent_dim=latent_dim,
         cond_dim=cond_dim,
         image_size=image_size,
         ngf=ngf,
+        cond_norm_type=cond_norm_type,
     ).to(device)
     
     generator.load_state_dict(checkpoint['generator_state_dict'])
     generator.eval()
     
+    # Replay the conditioning normalization that the model was trained with.
+    normalize_cond = checkpoint.get('normalize_cond', False)
+    cond_stats = checkpoint.get('cond_stats', None)
+    if normalize_cond and cond_stats is not None:
+        print(f"Replaying training-time cond normalization (cond_stats from checkpoint).")
+
     # Create dataset for conditioning vectors
     test_dataset = CorrosionCGANDataset(
         csv_path=args.test_csv,
         img_root=args.img_root,
         use_channels=use_channels,
         image_size=image_size,
+        normalize_cond=normalize_cond,
+        cond_stats=cond_stats,
     )
     
     test_loader = DataLoader(

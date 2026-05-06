@@ -1,6 +1,6 @@
 """
 Training script for WGAN-GP (Wasserstein GAN with Gradient Penalty) on corrosion images.
-Uses MACE (Mean Absolute Corrosion Error) for early stopping and model selection.
+Uses MACE (Mean Absolute Corrosion Error) for model selection (best checkpoint).
 """
 import argparse
 import os
@@ -12,14 +12,18 @@ import cv2
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.functional as F
 import torch.optim as optim
+from pytorch_msssim import ssim as ssim_fn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.utils import make_grid
 from tqdm import tqdm
 
+import lpips as lpips_lib
+
 from cgan.dataset import CorrosionCGANDataset
-from cgan.models import Generator, Critic, compute_gradient_penalty, weights_init
+from cgan.models import Generator, Critic, PatchCritic, compute_gradient_penalty, weights_init
 
 
 def resize_for_display(images: torch.Tensor, target_size: tuple = (110, 300)) -> torch.Tensor:
@@ -79,61 +83,67 @@ def load_real_corrosion_scores(csv_path: str, img_root: str = "datasets/corrosio
     return corrosion_map
 
 
-def compute_validation_mace(
+def compute_validation_recon(
     generator: torch.nn.Module,
     val_dataset: CorrosionCGANDataset,
     real_corrosion_map: dict,
     device: torch.device,
     latent_dim: int,
     sample_size: int = 64,
-) -> float:
+    lpips_fn: torch.nn.Module = None,
+) -> tuple:
     """
-    Compute MACE on a subset of validation samples.
-    
-    Args:
-        generator: Generator model in eval mode
-        val_dataset: Validation dataset
-        real_corrosion_map: Dict mapping filename -> real corrosion score
-        device: Torch device
-        latent_dim: Latent dimension for generator
-        sample_size: Number of samples to evaluate
-    
+    Compute L1, SSIM, LPIPS, and MACE on a subset of validation samples.
+    All metrics are computed on raw generator output (no histogram matching).
+
     Returns:
-        MACE value (lower is better)
+        (val_l1, val_ssim, val_lpips, val_mace) — L1/LPIPS/MACE lower-better, SSIM higher-better.
+        val_lpips is None if lpips_fn is None.
     """
     generator.eval()
-    
-    # Sample random indices
+
     n_samples = min(sample_size, len(val_dataset))
     indices = random.sample(range(len(val_dataset)), n_samples)
-    
-    errors = []
-    
+
+    l1_errors = []
+    ssim_vals = []
+    lpips_vals = []
+    mace_errors = []
+
     with torch.no_grad():
         for idx in indices:
-            _, cond, filename = val_dataset[idx]
+            real_image, cond, filename = val_dataset[idx]
+            real_image = real_image.unsqueeze(0).to(device)  # [1, 1, H, W] in [-1, 1]
             cond = cond.unsqueeze(0).to(device)
-            
-            # Generate image
+
             noise = torch.randn(1, latent_dim, device=device)
-            fake_image = generator(noise, cond)
-            
-            # Convert to numpy and compute corrosion score
-            img_np = fake_image.cpu().numpy()[0, 0]  # [H, W]
+            fake_image = generator(noise, cond)  # [1, 1, H, W] in [-1, 1]
+
+            l1_errors.append(F.l1_loss(fake_image, real_image).item())
+            ssim_vals.append(
+                ssim_fn(fake_image, real_image, data_range=2.0, size_average=True).item()
+            )
+            if lpips_fn is not None:
+                lpips_vals.append(
+                    lpips_fn(fake_image.repeat(1, 3, 1, 1), real_image.repeat(1, 3, 1, 1)).mean().item()
+                )
+
+            img_np = fake_image.cpu().numpy()[0, 0]
             img_np = ((img_np + 1) / 2 * 255).clip(0, 255).astype(np.uint8)
             gen_corrosion = compute_corrosion_score(img_np)
-            
-            # Get real corrosion score
+
             if not filename.endswith('.png'):
                 filename = filename + '.png'
-            
             real_corrosion = real_corrosion_map.get(filename)
             if real_corrosion is not None:
-                errors.append(abs(real_corrosion - gen_corrosion))
-    
-    if errors:
-        return np.mean(errors)
-    return float('inf')
+                mace_errors.append(abs(real_corrosion - gen_corrosion))
+
+    val_l1 = float(np.mean(l1_errors)) if l1_errors else float('inf')
+    val_ssim = float(np.mean(ssim_vals)) if ssim_vals else 0.0
+    val_lpips = float(np.mean(lpips_vals)) if lpips_vals else None
+    val_mace = float(np.mean(mace_errors)) if mace_errors else float('inf')
+
+    return val_l1, val_ssim, val_lpips, val_mace
 
 
 def train_wgan_gp(args):
@@ -144,9 +154,35 @@ def train_wgan_gp(args):
     # Create experiment directory
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     channels_str = "_".join(args.use_channels)
-    exp_dir = Path(args.log_dir) / f"{timestamp}_{channels_str}_wgangp"
+    use_l1ssim = args.lambda_l1 > 0 or args.lambda_ssim > 0
+    use_perc = args.lambda_perceptual > 0
+    use_recon = use_l1ssim or use_perc
+    suffix_parts = ["wgangp"]
+    if use_l1ssim:
+        suffix_parts.append("l1ssim")
+    if use_perc:
+        suffix_parts.append("perc")
+    if args.use_patchgan:
+        suffix_parts.append("patch")
+    if args.cond_norm_type == 'batchnorm':
+        suffix_parts.append("bn")
+    elif args.normalize_cond:
+        suffix_parts.append("zscore")
+    suffix = "_" + "_".join(suffix_parts)
+    exp_dir = Path(args.log_dir) / f"{timestamp}_{channels_str}{suffix}"
     exp_dir.mkdir(parents=True, exist_ok=True)
     print(f"Experiment directory: {exp_dir}")
+    if use_recon:
+        print(f"Reconstruction loss active: lambda_l1={args.lambda_l1}, "
+              f"lambda_ssim={args.lambda_ssim}, lambda_perceptual={args.lambda_perceptual}")
+
+    # Initialize LPIPS perceptual loss if active. Frozen, eval mode.
+    lpips_fn = None
+    if use_perc:
+        print("Initializing LPIPS (VGG) perceptual loss...")
+        lpips_fn = lpips_lib.LPIPS(net='vgg', verbose=False).to(device).eval()
+        for p in lpips_fn.parameters():
+            p.requires_grad = False
     
     # TensorBoard writer
     writer = SummaryWriter(exp_dir / "tensorboard")
@@ -159,19 +195,22 @@ def train_wgan_gp(args):
     )
     print(f"Loaded {len(real_corrosion_map)} real corrosion scores")
     
-    # Create datasets
+    # Create datasets. Conditioning normalization (if enabled) uses TRAIN-set
+    # statistics for both train and val to avoid distribution shift.
     train_dataset = CorrosionCGANDataset(
         csv_path=args.csv,
         img_root=args.img_root,
         use_channels=args.use_channels,
         image_size=args.image_size,
+        normalize_cond=args.normalize_cond,
     )
-    
     val_dataset = CorrosionCGANDataset(
         csv_path=args.val_csv,
         img_root=args.img_root,
         use_channels=args.use_channels,
         image_size=args.image_size,
+        normalize_cond=args.normalize_cond,
+        cond_stats=train_dataset.cond_stats,
     )
     
     cond_dim = train_dataset.get_cond_dim()
@@ -194,13 +233,26 @@ def train_wgan_gp(args):
         cond_dim=cond_dim,
         image_size=args.image_size,
         ngf=args.ngf,
+        cond_norm_type=args.cond_norm_type,
     ).to(device)
-    
-    critic = Critic(
-        cond_dim=cond_dim,
-        image_size=args.image_size,
-        ndf=args.ndf,
-    ).to(device)
+
+    if args.use_patchgan:
+        print("Using PatchGAN-style critic (70x70 receptive field, mean over patches).")
+        critic = PatchCritic(
+            cond_dim=cond_dim,
+            image_size=args.image_size,
+            ndf=args.ndf,
+            cond_norm_type=args.cond_norm_type,
+        ).to(device)
+    else:
+        critic = Critic(
+            cond_dim=cond_dim,
+            image_size=args.image_size,
+            ndf=args.ndf,
+            cond_norm_type=args.cond_norm_type,
+        ).to(device)
+    if args.cond_norm_type != 'none':
+        print(f"Cond input normalization: {args.cond_norm_type}")
     
     # Initialize weights
     generator.apply(weights_init)
@@ -230,10 +282,19 @@ def train_wgan_gp(args):
         fixed_val_real = images[:num_vis].to(device)
         break
     
-    # Early stopping based on MACE (lower = better)
-    best_mace = float('inf')
-    patience_counter = 0
-    
+    # Best-model selection score (lower = better).
+    # When recon loss is active: val_l1 + (lambda_ssim/lambda_l1)*(1 - val_ssim) + (lambda_perceptual/lambda_l1)*val_lpips
+    # — mirrors the supervised part of the training objective (adversarial term excluded; its scale drifts).
+    # Otherwise: val_mace — preserves prior behavior.
+    best_score = float('inf')
+    best_score_metrics = {}
+    if args.lambda_l1 > 0:
+        ssim_to_l1_ratio = args.lambda_ssim / args.lambda_l1
+        perc_to_l1_ratio = args.lambda_perceptual / args.lambda_l1
+    else:
+        ssim_to_l1_ratio = 0.0
+        perc_to_l1_ratio = 0.0
+
     # Training loop
     global_step = 0
     for epoch in range(1, args.epochs + 1):
@@ -281,35 +342,73 @@ def train_wgan_gp(args):
             # Train Generator
             # ---------------------
             generator.zero_grad()
-            
+
             noise = torch.randn(batch_size, args.latent_dim, device=device)
             fake_images = generator(noise, conds)
             score_fake = critic(fake_images, conds)
-            
-            # Generator wants to maximize C(fake) -> minimize -C(fake)
-            loss_g = -score_fake.mean()
+
+            # Adversarial term: maximize C(fake) -> minimize -C(fake)
+            loss_g_adv = -score_fake.mean()
+
+            # Reconstruction terms (R-channel only; both fake and real are [B,1,H,W] in [-1,1])
+            if args.lambda_l1 > 0:
+                loss_g_l1 = F.l1_loss(fake_images, real_images)
+            else:
+                loss_g_l1 = torch.tensor(0.0, device=device)
+
+            if args.lambda_ssim > 0:
+                ssim_value = ssim_fn(fake_images, real_images, data_range=2.0, size_average=True)
+                loss_g_ssim = 1.0 - ssim_value
+            else:
+                loss_g_ssim = torch.tensor(0.0, device=device)
+
+            # LPIPS expects 3-channel [-1, 1] inputs; replicate single R channel 3x.
+            if lpips_fn is not None:
+                loss_g_perc = lpips_fn(
+                    fake_images.repeat(1, 3, 1, 1),
+                    real_images.repeat(1, 3, 1, 1),
+                ).mean()
+            else:
+                loss_g_perc = torch.tensor(0.0, device=device)
+
+            loss_g = (loss_g_adv
+                      + args.lambda_l1 * loss_g_l1
+                      + args.lambda_ssim * loss_g_ssim
+                      + args.lambda_perceptual * loss_g_perc)
             loss_g.backward()
             optimizer_G.step()
-            
+
             # Logging
             epoch_c_loss += loss_c.item()
             epoch_g_loss += loss_g.item()
             epoch_gp += gp.item()
             epoch_w_distance += w_distance.item()
             num_batches += 1
-            
-            pbar.set_postfix({
+
+            postfix = {
                 'W_dist': f'{w_distance.item():.3f}',
                 'GP': f'{gp.item():.3f}',
-                'G_loss': f'{loss_g.item():.3f}'
-            })
-            
+                'G_adv': f'{loss_g_adv.item():.3f}',
+            }
+            if use_l1ssim:
+                postfix['L1'] = f'{loss_g_l1.item():.3f}'
+                postfix['1-SSIM'] = f'{loss_g_ssim.item():.3f}'
+            if use_perc:
+                postfix['LPIPS'] = f'{loss_g_perc.item():.3f}'
+            pbar.set_postfix(postfix)
+
             # TensorBoard step logging
             if global_step % 100 == 0:
                 writer.add_scalar('Train/W_distance_step', w_distance.item(), global_step)
                 writer.add_scalar('Train/GP_step', gp.item(), global_step)
                 writer.add_scalar('Train/G_loss_step', loss_g.item(), global_step)
-            
+                writer.add_scalar('Train/G_adv_step', loss_g_adv.item(), global_step)
+                if use_l1ssim:
+                    writer.add_scalar('Train/G_l1_step', loss_g_l1.item(), global_step)
+                    writer.add_scalar('Train/G_ssim_loss_step', loss_g_ssim.item(), global_step)
+                if use_perc:
+                    writer.add_scalar('Train/G_lpips_step', loss_g_perc.item(), global_step)
+
             global_step += 1
         
         # Epoch averages
@@ -356,19 +455,26 @@ def train_wgan_gp(args):
         
         avg_val_w_distance = val_w_distance / val_batches
         avg_val_g_loss = val_g_loss / val_batches
-        
-        # Compute validation MACE
-        val_mace = compute_validation_mace(
-            generator, val_dataset, real_corrosion_map, 
-            device, args.latent_dim, args.mace_sample_size
+
+        # Compute validation L1, SSIM, LPIPS, MACE on raw generator output (no histogram matching)
+        val_l1, val_ssim, val_lpips, val_mace = compute_validation_recon(
+            generator, val_dataset, real_corrosion_map,
+            device, args.latent_dim, args.mace_sample_size,
+            lpips_fn=lpips_fn,
         )
-        
+
         writer.add_scalar('Val/W_distance', avg_val_w_distance, epoch)
         writer.add_scalar('Val/G_loss', avg_val_g_loss, epoch)
+        writer.add_scalar('Val/L1', val_l1, epoch)
+        writer.add_scalar('Val/SSIM', val_ssim, epoch)
         writer.add_scalar('Val/MACE', val_mace, epoch)
-        
+        if val_lpips is not None:
+            writer.add_scalar('Val/LPIPS', val_lpips, epoch)
+
+        lpips_str = f" LPIPS={val_lpips:.4f}" if val_lpips is not None else ""
         print(f"Epoch {epoch}: Train W={avg_w_distance:.4f} GP={avg_gp:.4f} G={avg_g_loss:.4f} | "
-              f"Val W={avg_val_w_distance:.4f} G={avg_val_g_loss:.4f} MACE={val_mace:.2f}")
+              f"Val W={avg_val_w_distance:.4f} G={avg_val_g_loss:.4f} "
+              f"L1={val_l1:.4f} SSIM={val_ssim:.4f}{lpips_str} MACE={val_mace:.2f}")
         
         # ---------------------
         # Generate sample images
@@ -411,24 +517,57 @@ def train_wgan_gp(args):
                 'critic_state_dict': critic.state_dict(),
                 'optimizer_G_state_dict': optimizer_G.state_dict(),
                 'optimizer_C_state_dict': optimizer_C.state_dict(),
-                # Include model config for inference compatibility
                 'cond_dim': cond_dim,
                 'use_channels': args.use_channels,
                 'image_size': args.image_size,
                 'latent_dim': args.latent_dim,
                 'ngf': args.ngf,
                 'ndf': args.ndf,
+                'val_l1': val_l1,
+                'val_ssim': val_ssim,
+                'val_lpips': val_lpips,
                 'val_mace': val_mace,
+                'lambda_l1': args.lambda_l1,
+                'lambda_ssim': args.lambda_ssim,
+                'lambda_perceptual': args.lambda_perceptual,
+                'use_patchgan': args.use_patchgan,
+                'normalize_cond': args.normalize_cond,
+                'cond_stats': train_dataset.cond_stats,
+                'cond_norm_type': args.cond_norm_type,
             }, exp_dir / f"checkpoint_epoch_{epoch:04d}.pt")
-        
+
         # ---------------------
-        # Early stopping (based on validation MACE - lower is better)
+        # Save best model
         # ---------------------
-        if val_mace < best_mace:
-            best_mace = val_mace
-            patience_counter = 0
-            
-            # Save best model
+        # Selection key: when recon loss is active, mirror the supervised training objective:
+        #   val_l1 + (lambda_ssim/lambda_l1)*(1-SSIM) + (lambda_perceptual/lambda_l1)*val_lpips
+        # When inactive, fall back to val MACE (preserves prior behavior for legacy runs).
+        if use_recon:
+            score_components = []
+            criterion_parts = ["L1"]
+            current_score = val_l1
+            if args.lambda_ssim > 0:
+                current_score = current_score + ssim_to_l1_ratio * (1.0 - val_ssim)
+                criterion_parts.append("wSSIM")
+            if val_lpips is not None and args.lambda_perceptual > 0:
+                current_score = current_score + perc_to_l1_ratio * val_lpips
+                criterion_parts.append("wLPIPS")
+            criterion_label = "+".join(criterion_parts)
+        else:
+            current_score = val_mace
+            criterion_label = "MACE"
+
+        if current_score < best_score:
+            best_score = current_score
+            best_score_metrics = {
+                'epoch': epoch,
+                'val_l1': val_l1,
+                'val_ssim': val_ssim,
+                'val_lpips': val_lpips,
+                'val_mace': val_mace,
+                'score': current_score,
+            }
+
             torch.save({
                 'epoch': epoch,
                 'generator_state_dict': generator.state_dict(),
@@ -439,26 +578,40 @@ def train_wgan_gp(args):
                 'latent_dim': args.latent_dim,
                 'ngf': args.ngf,
                 'ndf': args.ndf,
+                'val_l1': val_l1,
+                'val_ssim': val_ssim,
+                'val_lpips': val_lpips,
                 'val_mace': val_mace,
+                'lambda_l1': args.lambda_l1,
+                'lambda_ssim': args.lambda_ssim,
+                'lambda_perceptual': args.lambda_perceptual,
+                'use_patchgan': args.use_patchgan,
+                'normalize_cond': args.normalize_cond,
+                'cond_stats': train_dataset.cond_stats,
+                'cond_norm_type': args.cond_norm_type,
+                'selection_criterion': criterion_label,
+                'selection_score': current_score,
             }, exp_dir / "best_model.pt")
-            print(f"  -> New best model saved (MACE={val_mace:.2f})")
+            lpips_disp = f" LPIPS={val_lpips:.4f}" if val_lpips is not None else ""
+            print(f"  -> New best model saved ({criterion_label}={current_score:.4f}, "
+                  f"L1={val_l1:.4f} SSIM={val_ssim:.4f}{lpips_disp} MACE={val_mace:.2f})")
         else:
-            patience_counter += 1
-            print(f"  -> No improvement ({patience_counter}/{args.patience})")
-        
-        if patience_counter >= args.patience:
-            print(f"Early stopping triggered at epoch {epoch}")
-            break
-    
+            print(f"  -> No improvement ({criterion_label} best={best_score:.4f})")
+
     writer.close()
-    print(f"Training complete. Best MACE: {best_mace:.2f}")
+    bsm = best_score_metrics
+    lpips_final = f" LPIPS={bsm.get('val_lpips'):.4f}" if bsm.get('val_lpips') is not None else ""
+    print(f"Training complete. Best {criterion_label}={best_score:.4f} at epoch {bsm.get('epoch', '?')} "
+          f"(L1={bsm.get('val_l1', float('nan')):.4f} "
+          f"SSIM={bsm.get('val_ssim', float('nan')):.4f}{lpips_final} "
+          f"MACE={bsm.get('val_mace', float('nan')):.2f})")
     print(f"Checkpoints saved to {exp_dir}")
-    
+
     return exp_dir
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train WGAN-GP for corrosion images with MACE-based early stopping")
+    parser = argparse.ArgumentParser(description="Train WGAN-GP for corrosion images")
     
     # Data arguments
     parser.add_argument("--csv", type=str, required=True,
@@ -494,8 +647,20 @@ def main():
                         help="Number of critic updates per generator update")
     parser.add_argument("--lambda_gp", type=float, default=10.0,
                         help="Gradient penalty coefficient")
-    parser.add_argument("--patience", type=int, default=20,
-                        help="Early stopping patience (based on MACE)")
+    parser.add_argument("--lambda_l1", type=float, default=0.0,
+                        help="Pixel-wise L1 reconstruction weight on the generator (0 disables; pix2pix uses 100)")
+    parser.add_argument("--lambda_ssim", type=float, default=0.0,
+                        help="(1 - SSIM) reconstruction weight on the generator (0 disables)")
+    parser.add_argument("--lambda_perceptual", type=float, default=0.0,
+                        help="LPIPS (VGG) perceptual loss weight on the generator (0 disables; pix2pix-HD uses 10)")
+    parser.add_argument("--use_patchgan", action="store_true",
+                        help="Use PatchGAN-style critic (70x70 RF, spatial mean) instead of the global projection critic.")
+    parser.add_argument("--normalize_cond", action="store_true",
+                        help="Z-score normalize each conditioning entry at the dataset level. Legacy fix for 4ch S+Phase scale mismatch; prefer --cond_norm_type batchnorm for new runs.")
+    parser.add_argument("--cond_norm_type", type=str, default='none', choices=['none', 'batchnorm'],
+                        help="Model-level cond input normalization. 'batchnorm' inserts nn.BatchNorm1d(cond_dim) at the start of Generator and Critic conditioning paths — uniform fix for any channel-scale mismatch with learnable affine recovery.")
+    parser.add_argument("--patience", type=int, default=0,
+                        help="Deprecated, kept for compatibility")
     parser.add_argument("--num_workers", type=int, default=4,
                         help="DataLoader workers")
     
@@ -512,7 +677,7 @@ def main():
     args = parser.parse_args()
     
     print("=" * 60)
-    print("WGAN-GP Training Configuration (MACE-based early stopping)")
+    print("WGAN-GP Training Configuration")
     print("=" * 60)
     for k, v in vars(args).items():
         print(f"  {k}: {v}")
