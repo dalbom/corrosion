@@ -9,6 +9,11 @@ This repository trains and evaluates sensor-conditioned image reconstruction mod
 
 ### Installation
 
+Choose one environment manager and expand its setup commands.
+
+<details>
+<summary>pip + venv</summary>
+
 ```bash
 # Python 3.9+ recommended
 python -m venv .venv && source .venv/bin/activate
@@ -18,8 +23,44 @@ python -m venv .venv && source .venv/bin/activate
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 
 # Core dependencies
-pip install denoising-diffusion-pytorch einops tqdm pillow pandas tensorboard scikit-image
+pip install -r requirements.txt
 ```
+
+</details>
+
+<details>
+<summary>conda</summary>
+
+```bash
+conda create -n sensor-recon python=3.10 -y
+conda activate sensor-recon
+
+# Install PyTorch (choose the right command for your CUDA version)
+# See https://pytorch.org/get-started/locally/
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# Core dependencies
+pip install -r requirements.txt
+```
+
+</details>
+
+<details>
+<summary>micromamba</summary>
+
+```bash
+micromamba create -n py310 python=3.10 -y
+micromamba activate py310
+
+# Install PyTorch (choose the right command for your CUDA version)
+# See https://pytorch.org/get-started/locally/
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# Core dependencies
+pip install -r requirements.txt
+```
+
+</details>
 
 ### Dataset
 
@@ -37,7 +78,20 @@ Example filename → image path mapping:
 
 ### Quick Start
 
-New config-driven entrypoints:
+For normal use, create a run plan through the interview script and execute it:
+
+```bash
+python scripts/generate_sweep_config.py \
+  --domain-config configs/corrosion/domain.yaml
+
+python -m sensor_image_recon.cli sweep \
+  --config configs/sweeps/corrosion/<study_name>.yaml
+```
+
+The interview asks for the study name, methods, sensor combinations, seeds, and stages. It writes a YAML file so the same run can be repeated later.
+
+<details>
+<summary>Manual train, infer, and evaluate commands</summary>
 
 ```bash
 export PYTHONPATH="$PWD/src:${PYTHONPATH:-}"
@@ -52,6 +106,11 @@ python -m sensor_image_recon.cli evaluate \
   --run runs/corrosion/cgan/corrosion_default_verification/s11_s21/seed_001/<run_id>
 ```
 
+</details>
+
+<details>
+<summary>Run directory layout</summary>
+
 Run outputs are immutable and self-contained:
 
 ```text
@@ -64,6 +123,11 @@ runs/{domain}/{method}/{study}/{sensor_set}/{seed}/{run_id}/
   inference/
   metrics/
 ```
+
+</details>
+
+<details>
+<summary>Catalog overview for checkpoints and generated images</summary>
 
 For overview across many sensor/method combinations, generate a symlink catalog:
 
@@ -86,14 +150,33 @@ runs/catalog/{domain}/{method}/{study}/
 
 If multiple runs have the same config identity, the catalog registers the most recent run and lists older skipped runs in `registered_runs.json` and in the command output.
 
+</details>
+
 ### Sweeps
 
-Domain-wide inventory lives in `configs/corrosion/domain.yaml`. It defines datasets, supported sensor sets, and methods. The L1 + SSIM + LPIPS reconstruction loss with BatchNorm conditioning is the default for every active method. You can generate an interactive sweep config:
+Generate a sweep config through the interview script:
 
 ```bash
 python scripts/generate_sweep_config.py \
   --domain-config configs/corrosion/domain.yaml
 ```
+
+Then run the generated file:
+
+```bash
+python -m sensor_image_recon.cli sweep \
+  --config configs/sweeps/corrosion/<study_name>.yaml
+```
+
+<details>
+<summary>What the domain inventory defines</summary>
+
+Domain-wide inventory lives in `configs/corrosion/domain.yaml`. It defines datasets, supported sensor sets, and methods. The L1 + SSIM + LPIPS reconstruction loss with BatchNorm conditioning is the default for every active method.
+
+</details>
+
+<details>
+<summary>Run a prepared sweep config</summary>
 
 Or run a prepared sweep:
 
@@ -101,6 +184,11 @@ Or run a prepared sweep:
 python -m sensor_image_recon.cli sweep \
   --config configs/sweeps/corrosion/cgan_all_sensors.yaml
 ```
+
+</details>
+
+<details>
+<summary>Edit sweep selections manually</summary>
 
 Sweep selections support one method with all sensor sets, one sensor set with all methods, or explicit method/sensor subsets:
 
@@ -112,40 +200,14 @@ selection:
 stages: [train, infer, evaluate, catalog]
 ```
 
-Old one-off entrypoints and run scripts have been moved under `unused/`. They are retained for reference only; new experiments should use `python -m sensor_image_recon.cli` or `scripts/recon.sh`.
+</details>
+
+Old one-off entrypoints and run scripts were removed from the active repository. New experiments should use `python -m sensor_image_recon.cli` or `scripts/recon.sh`.
 
 ### Tips
 
 - Ensure the `filename` convention and directory structure match the Dataset section above.
 - Adjust `--image_size` to balance speed and fidelity.
-
-### Legacy Post Image Processing
-
-Histogram matching and other correction utilities are retained only as legacy references. They are not part of the new raw-only evaluation process.
-
-**Available Methods:**
-
-| Method | Description | Best For |
-|--------|-------------|----------|
-| **Histogram Matching** | Matches the full histogram distribution of generated images to real images | General use, good baseline |
-| **Offset Correction** | Adds/subtracts a constant value to shift mean intensity | Simple linear shift |
-| **Scaling Correction** | Multiplies by a factor to match mean intensity | Proportional adjustment |
-| **Linear Regression** | Applies a learned linear transformation (y = mx + b) | When relationship is linear |
-| **Soft Histogram Matching** | Blends histogram matching with original (α=0.5) | Preserving some original characteristics |
-| **Nonlinear Curve Fitting** | Gamma correction + polynomial LUT | Complex nonlinear relationships |
-| **Optimal Transport (EMD)** | Minimizes Earth Mover's Distance between distributions | Theoretically optimal mapping |
-
-**Quick Usage:**
-
-```bash
-# Apply correction to generated images for historical comparisons
-python scripts/legacy/correct_generated_images.py
-
-# Visualize before/after distributions
-python scripts/legacy/create_histogram_figure.py
-```
-
-Detailed legacy notes are archived under `unused/legacy_docs/IMGPROC.md`.
 
 ### Acknowledgements
 
